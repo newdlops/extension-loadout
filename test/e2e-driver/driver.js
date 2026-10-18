@@ -7,6 +7,7 @@ const path = require('path');
 const DIR = process.env.EXTENSION_LOADOUT_E2E_DIR;
 const ON = 'loadouttest.dummy-on'; // 전역에서 켜진 확장
 const OFF = 'loadouttest.dummy-off'; // 전역에서 꺼진 확장
+const RUST = 'loadouttest.dummy-rust'; // Rust 파일에서만 켜지는 확장
 
 const log = (o) => fs.appendFileSync(path.join(DIR, 'driver.jsonl'), JSON.stringify({ t: Date.now(), ...o }) + '\n');
 const phaseFile = () => path.join(DIR, 'phase');
@@ -26,9 +27,12 @@ exports.activate = async () => {
       setPhase('2');
       await vscode.commands.executeCommand('extensionLoadout.applyAndRestart');
     } else if (phase === '2') {
-      await vscode.commands.executeCommand('extensionLoadout.followGlobal', ON);
-      log({ phase, configAfterFirstFollowGlobal: JSON.parse(fs.readFileSync(config, 'utf8')) });
-      await vscode.commands.executeCommand('extensionLoadout.followGlobal', OFF);
+      // 체크박스로 고른 것을 한꺼번에 끈다.
+      await vscode.commands.executeCommand('_extensionLoadout.select', [ON, RUST]);
+      await vscode.commands.executeCommand('extensionLoadout.disableSelected');
+      log({ phase, configAfterSelectedOff: JSON.parse(fs.readFileSync(config, 'utf8')) });
+      // 여러 개를 한 번에 전역 따름으로 되돌린다.
+      await vscode.commands.executeCommand('extensionLoadout.followGlobal', [ON, OFF, RUST]);
       log({ phase, configAfterFollowGlobal: JSON.parse(fs.readFileSync(config, 'utf8')) });
       setPhase('3');
       await vscode.commands.executeCommand('extensionLoadout.applyAndRestart');

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- **Select, then turn off in one go.** Every extension row has a selection checkbox, and a group's checkbox selects the whole group. While something is selected, **Turn Off Selected** and **Clear Selection** appear at the top of the panel, with a "N selected" note.
+- Multi-select rows with ⌘/⇧-click and use any inline action (turn on, turn off, same as global) on all of them at once.
+- The "Not needed in this folder" group starts with a visible **Turn all N off** row instead of a hover-only button.
+- After changing several extensions you get one "Restart VS Code to apply?" prompt, and the command no longer waits on it.
+
 ## 0.3.0
 
 - **Not needed in this folder**: a new group at the top lists extensions that are certainly unneeded here, with the reason (for example "No rust files (*.rs), Cargo.toml"). Turn them off one by one or all at once with the button on the group. Only extensions that start for specific languages or files are considered, and only when this folder has none of them. Extensions that start always, target common formats (JSON, Markdown, YAML…), have triggers that cannot be checked, or that another enabled extension depends on are never suggested.

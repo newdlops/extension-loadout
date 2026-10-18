@@ -34,9 +34,17 @@ export function activate(context: vscode.ExtensionContext): void {
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   // 전용 액티비티 바 패널과 탐색기 사이드바 양쪽에 같은 목록을 띄운다.
   const views = [
-    vscode.window.createTreeView('extensionLoadout.extensions', { treeDataProvider: tree, showCollapseAll: true }),
-    vscode.window.createTreeView('extensionLoadout.explorer', { treeDataProvider: tree, showCollapseAll: true }),
+    vscode.window.createTreeView('extensionLoadout.extensions', { treeDataProvider: tree, showCollapseAll: true, canSelectMany: true, manageCheckboxStateManually: true }),
+    vscode.window.createTreeView('extensionLoadout.explorer', { treeDataProvider: tree, showCollapseAll: true, canSelectMany: true, manageCheckboxStateManually: true }),
   ];
+  // 체크박스는 "선택"이다. 선택한 것을 버튼 하나로 한꺼번에 끈다.
+  for (const v of views) context.subscriptions.push(v.onDidChangeCheckboxState((e) => tree.toggle(e.items)));
+  context.subscriptions.push(
+    tree.onDidChangeSelection((count) => {
+      void vscode.commands.executeCommand('setContext', 'extensionLoadout.hasSelection', count > 0);
+      for (const v of views) v.message = count ? `${count} selected. Click "Turn Off Selected" (⊘) at the top to turn them off in this folder.` : undefined;
+    }),
+  );
 
   // 추천은 목록을 처음 그릴 때 한 번, 그리고 확장이 바뀌거나 사용자가 다시 찾을 때만 계산한다.
   let suggestions: Promise<Suggestion[]> | undefined;
@@ -122,18 +130,45 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
-  const setOverride = async (target: Node | string | undefined, value: Override | undefined) => {
+  /** 여러 확장의 이 폴더 설정을 한 번에 바꾸고 한 번만 저장한다. 바뀐 개수를 돌려준다. */
+  const applyOverrides = async (ids: string[], value: Override | undefined): Promise<number> => {
     const s = requireWorkspace();
-    if (!s) return;
-    const id = typeof target === 'string' ? normalizeId(target) : target?.kind === 'ext' ? target.row.id : undefined;
-    if (!id || id === model.selfId) return;
+    if (!s) return 0;
     const next = new Map(s.overrides);
-    const globallyEnabled = !model.readGloballyDisabled().has(id);
-    // 전역 설정과 같은 상태로 "강제"하는 것은 의미가 없으므로 전역 따름으로 정리한다.
-    if (value === undefined || (value === 'on') === globallyEnabled) next.delete(id);
-    else next.set(id, value);
-    await model.save(next);
+    const globallyDisabled = model.readGloballyDisabled();
+    let changed = 0;
+    for (const id of new Set(ids.map(normalizeId))) {
+      if (id === model.selfId) continue;
+      const before = next.get(id);
+      // 전역 설정과 같은 상태로 "강제"하는 것은 의미가 없으므로 전역 따름으로 정리한다.
+      if (value === undefined || (value === 'on') === !globallyDisabled.has(id)) next.delete(id);
+      else next.set(id, value);
+      if (next.get(id) !== before) changed++;
+    }
+    if (changed) await model.save(next);
     refresh();
+    return changed;
+  };
+
+  /** 여러 개를 바꾼 뒤에는 재시작 안내를 한 번 띄운다. */
+  const offerRestart = async (message: string) => {
+    if (!model.status().pending) return;
+    const go = await vscode.window.showInformationMessage(`${message} Restart VS Code to apply?`, 'Apply and Restart', 'Later');
+    if (go === 'Apply and Restart') await applyAndRestart();
+  };
+
+  const plural = (n: number) => `${n} extension${n === 1 ? '' : 's'}`;
+
+  /** 명령 인자를 확장 ID 목록으로. 트리에서 여러 줄을 골랐으면 두 번째 인자로 모두 들어온다. */
+  const idsOf = (target: unknown, many?: unknown): string[] => {
+    const list = Array.isArray(many) && many.length ? many : Array.isArray(target) ? target : [target];
+    return list.flatMap((t) => (typeof t === 'string' ? [t] : (t as Node | undefined)?.kind === 'ext' ? [(t as Extract<Node, { kind: 'ext' }>).row.id] : []));
+  };
+
+  const setOverride = async (target: unknown, many: unknown, value: Override | undefined) => {
+    const ids = idsOf(target, many);
+    const changed = await applyOverrides(ids, value);
+    if (ids.length > 1 && changed) void offerRestart(`Updated ${plural(changed)} for this folder.`);
   };
 
   const pick = async () => {
@@ -173,25 +208,21 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   const turnOffSuggested = async () => {
-    const s = requireWorkspace();
-    if (!s) return;
-    const targets = tree.activeSuggestions().map((x) => x.row);
-    if (!targets.length) return;
-    const next = new Map(s.overrides);
-    for (const r of targets) {
-      if (r.globallyEnabled) next.set(r.id, 'off');
-      else next.delete(r.id);
+    const ids = tree.activeSuggestions().map((x) => x.row.id);
+    const changed = await applyOverrides(ids, 'off');
+    if (changed) void offerRestart(`Turned off ${plural(changed)} for this folder.`);
+  };
+
+  const turnOffSelected = async () => {
+    const ids = tree.selectedIds();
+    if (!ids.length) {
+      vscode.window.showInformationMessage('Select extensions with the checkboxes first.');
+      return;
     }
-    await model.save(next);
-    const after = refresh();
-    if (after?.pending) {
-      const go = await vscode.window.showInformationMessage(
-        `Turned off ${targets.length} extension${targets.length > 1 ? 's' : ''} for this folder. Restart VS Code to apply?`,
-        'Apply and Restart',
-        'Later',
-      );
-      if (go === 'Apply and Restart') await applyAndRestart();
-    }
+    const changed = await applyOverrides(ids, 'off');
+    tree.clearSelection();
+    if (changed) void offerRestart(`Turned off ${plural(changed)} for this folder.`);
+    else vscode.window.showInformationMessage('The selected extensions are already off in this folder.');
   };
 
   const suggest = async () => {
@@ -216,9 +247,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('extensionLoadout.applyAndRestart', applyAndRestart),
     vscode.commands.registerCommand('extensionLoadout.pick', pick),
-    vscode.commands.registerCommand('extensionLoadout.enableHere', (n?: Node | string) => setOverride(n, 'on')),
-    vscode.commands.registerCommand('extensionLoadout.disableHere', (n?: Node | string) => setOverride(n, 'off')),
-    vscode.commands.registerCommand('extensionLoadout.followGlobal', (n?: Node | string) => setOverride(n, undefined)),
+    vscode.commands.registerCommand('extensionLoadout.enableHere', (n?: unknown, many?: unknown) => setOverride(n, many, 'on')),
+    vscode.commands.registerCommand('extensionLoadout.disableHere', (n?: unknown, many?: unknown) => setOverride(n, many, 'off')),
+    vscode.commands.registerCommand('extensionLoadout.followGlobal', (n?: unknown, many?: unknown) => setOverride(n, many, undefined)),
+    vscode.commands.registerCommand('extensionLoadout.disableSelected', turnOffSelected),
+    vscode.commands.registerCommand('extensionLoadout.clearSelection', () => tree.clearSelection()),
+    // 테스트용: ID 목록을 선택 상태로 만든다.
+    vscode.commands.registerCommand('_extensionLoadout.select', (ids: string[]) => tree.select(ids)),
     vscode.commands.registerCommand('extensionLoadout.refresh', () => refresh()),
     vscode.commands.registerCommand('extensionLoadout.openConfig', async () => {
       const s = requireWorkspace();

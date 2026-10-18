@@ -107,6 +107,7 @@ const checks = [
   ['1단계: Rust 전용 확장만 "필요 없음"으로 추천', JSON.stringify(lines.find((l) => l.suggestions)?.suggestions) === JSON.stringify(['loadouttest.dummy-rust'])],
   ['2단계: loadout 적용 후 ON 확장 꺼짐', state('2')?.on === false],
   ['2단계: loadout 적용 후 전역 OFF 확장 켜짐', state('2')?.off === true],
+  ['2단계: 선택한 확장 한꺼번에 끄기', JSON.stringify(lines.find((l) => l.configAfterSelectedOff)?.configAfterSelectedOff) === JSON.stringify({ enable: [OFF], disable: [ON, 'loadouttest.dummy-rust'] })],
   ['2단계: 전역 따름으로 되돌린 loadout 파일', JSON.stringify(followGlobal) === JSON.stringify({ enable: [], disable: [] })],
   ['3단계: 원래 상태로 복귀', state('3')?.on === true && state('3')?.off === false],
   ['오류 없음', !lines.some((l) => l.error)],

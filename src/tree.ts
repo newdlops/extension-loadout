@@ -70,6 +70,10 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
   private loading?: Promise<LoadoutSnapshot | undefined>;
   private byId = new Map<string, ExtensionRow>();
   private suggestions: Suggestion[] = [];
+  /** 체크박스로 고른 확장 ID. 켜짐/꺼짐 상태가 아니라 "한꺼번에 처리할 대상"이다. */
+  private readonly checked = new Set<string>();
+  private readonly selectionChanged = new vscode.EventEmitter<number>();
+  readonly onDidChangeSelection = this.selectionChanged.event;
 
   constructor(private readonly load: () => Promise<LoadoutSnapshot | undefined>) {}
 
@@ -81,6 +85,44 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
 
   setSuggestions(list: Suggestion[]): void {
     this.suggestions = list;
+    this.changed.fire();
+  }
+
+  selectedIds(): string[] {
+    // 목록을 읽은 뒤라면 그 사이 제거된 확장은 빼고 돌려준다.
+    return this.snap ? [...this.checked].filter((id) => this.byId.has(id)) : [...this.checked];
+  }
+
+  select(ids: string[]): void {
+    for (const id of ids) this.checked.add(id);
+    this.selectionUpdated();
+  }
+
+  clearSelection(): void {
+    this.checked.clear();
+    this.selectionUpdated();
+  }
+
+  /** 체크박스 변경. 묶음을 체크하면 그 묶음의 확장을 모두 고른다. */
+  toggle(items: readonly (readonly [Node, vscode.TreeItemCheckboxState])[]): void {
+    for (const [node, state] of items) {
+      const on = state === vscode.TreeItemCheckboxState.Checked;
+      const rows = node.kind === 'ext' ? [node.row] : node.kind === 'group' ? this.rowsOf(node) : [];
+      for (const r of rows) {
+        if (r.locked) continue;
+        if (on) this.checked.add(r.id);
+        else this.checked.delete(r.id);
+      }
+    }
+    this.selectionUpdated();
+  }
+
+  private rowsOf(node: Extract<Node, { kind: 'group' }>): ExtensionRow[] {
+    return node.group === 'suggest' ? this.activeSuggestions().map((x) => x.row) : node.rows;
+  }
+
+  private selectionUpdated(): void {
+    this.selectionChanged.fire(this.selectedIds().length);
     this.changed.fire();
   }
 
@@ -143,7 +185,15 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     }
     if (node.kind === 'group') {
       if (node.group === 'suggest') {
-        return this.activeSuggestions().map(({ row, suggestion }) => ({ kind: 'ext', row, pending: snap.pending, suggestion }));
+        const list = this.activeSuggestions();
+        const turnAllOff: Node = {
+          kind: 'notice',
+          label: list.length > 1 ? `Turn all ${list.length} off` : 'Turn it off',
+          detail: 'in this folder',
+          icon: new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('charts.red')),
+          command: { command: 'extensionLoadout.disableSuggested', title: 'Turn Off All Suggested' },
+        };
+        return [turnAllOff, ...list.map(({ row, suggestion }): Node => ({ kind: 'ext', row, pending: snap.pending, suggestion }))];
       }
       return node.rows.map((row) => ({ kind: 'ext', row, pending: snap.pending }));
     }
@@ -164,6 +214,11 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
       item.description = node.group === 'suggest' ? `${node.rows.length} · safe to turn off` : String(node.rows.length);
       item.tooltip = g.tooltip;
       item.contextValue = `group:${node.group}`;
+      const selectable = this.rowsOf(node).filter((r) => !r.locked);
+      if (selectable.length) {
+        const all = selectable.every((r) => this.checked.has(r.id));
+        item.checkboxState = { state: all ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked, tooltip: 'Select all in this group' };
+      }
       return item;
     }
     if (node.kind === 'notice') {
@@ -178,6 +233,12 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     const item = new vscode.TreeItem(r.displayName);
     item.iconPath = r.icon ? vscode.Uri.file(r.icon) : new vscode.ThemeIcon('extensions');
     item.command = { command: 'extension.open', title: 'Show Extension', arguments: [r.id] };
+    if (!r.locked) {
+      item.checkboxState = {
+        state: this.checked.has(r.id) ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked,
+        tooltip: 'Select (then use "Turn Off Selected" at the top)',
+      };
+    }
     if (node.suggestion) {
       item.id = `suggest:${r.id}`;
       item.description = node.suggestion.reason.replace(/ in this folder$/, '');
