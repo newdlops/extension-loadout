@@ -194,6 +194,42 @@
         "title": "Restart Extension Host (Free Extension Memory)",
         "category": "Extension Loadout",
         "icon": "$(debug-restart-frame)"
+      },
+      {
+        "command": "extensionLoadout.disableLearned",
+        "title": "Turn Off All Usually-Off Extensions",
+        "category": "Extension Loadout",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "extensionLoadout.installRecommended",
+        "title": "Install Recommended Extension",
+        "category": "Extension Loadout",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "extensionLoadout.savePreset",
+        "title": "Save Loadout as Preset…",
+        "category": "Extension Loadout",
+        "icon": "$(save)"
+      },
+      {
+        "command": "extensionLoadout.applyPreset",
+        "title": "Apply Preset to This Folder…",
+        "category": "Extension Loadout",
+        "icon": "$(symbol-misc)"
+      },
+      {
+        "command": "extensionLoadout.deletePreset",
+        "title": "Delete Preset…",
+        "category": "Extension Loadout",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "extensionLoadout.viewOptions",
+        "title": "Filter and Sort…",
+        "category": "Extension Loadout",
+        "icon": "$(filter)"
       }
     ],
     "menus": {
@@ -219,19 +255,24 @@
           "group": "navigation@4"
         },
         {
-          "command": "extensionLoadout.pick",
+          "command": "extensionLoadout.viewOptions",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@5"
         },
         {
-          "command": "extensionLoadout.openConfig",
+          "command": "extensionLoadout.pick",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@6"
         },
         {
-          "command": "extensionLoadout.refresh",
+          "command": "extensionLoadout.openConfig",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@7"
+        },
+        {
+          "command": "extensionLoadout.refresh",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
+          "group": "navigation@8"
         },
         {
           "command": "extensionLoadout.applyOnQuit",
@@ -262,6 +303,21 @@
           "command": "extensionLoadout.restartExtensionHost",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "3_memory@1"
+        },
+        {
+          "command": "extensionLoadout.savePreset",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
+          "group": "4_presets@1"
+        },
+        {
+          "command": "extensionLoadout.applyPreset",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
+          "group": "4_presets@2"
+        },
+        {
+          "command": "extensionLoadout.deletePreset",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
+          "group": "4_presets@3"
         }
       ],
       "view/item/context": [
@@ -272,7 +328,7 @@
         },
         {
           "command": "extensionLoadout.disableHere",
-          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(on|global-on|suggest):switchable$/",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(on|global-on|suggest|learned):switchable$/",
           "group": "inline@2"
         },
         {
@@ -294,6 +350,16 @@
           "command": "extensionLoadout.restartExtensionHost",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem == group:memory",
           "group": "inline@2"
+        },
+        {
+          "command": "extensionLoadout.disableLearned",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem == group:learned",
+          "group": "inline@1"
+        },
+        {
+          "command": "extensionLoadout.installRecommended",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem == rec:missing",
+          "group": "inline@1"
         }
       ],
       "commandPalette": [
@@ -359,6 +425,14 @@
         },
         {
           "command": "extensionLoadout.measureMemory",
+          "when": "false"
+        },
+        {
+          "command": "extensionLoadout.disableLearned",
+          "when": "false"
+        },
+        {
+          "command": "extensionLoadout.installRecommended",
           "when": "false"
         }
       ]

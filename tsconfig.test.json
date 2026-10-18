@@ -1,4 +1,4 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src/loadout.ts", "src/catalog.ts", "src/stateDb.ts", "src/restartHelper.ts", "src/recommend.ts", "src/plan.ts", "src/folders.ts", "src/history.ts", "src/processes.ts", "src/pressure.ts", "test/unit"]
+  "include": ["src/loadout.ts", "src/catalog.ts", "src/stateDb.ts", "src/restartHelper.ts", "src/recommend.ts", "src/plan.ts", "src/folders.ts", "src/history.ts", "src/processes.ts", "src/pressure.ts", "src/deps.ts", "src/learning.ts", "src/repoRecs.ts", "test/unit"]
 }

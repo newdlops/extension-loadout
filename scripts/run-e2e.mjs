@@ -42,6 +42,10 @@ const VSCE = path.join(ROOT, 'node_modules', '@vscode', 'vsce', 'vsce');
 const ON = 'loadouttest.dummy-on';
 const OFF = 'loadouttest.dummy-off';
 const RUST = 'loadouttest.dummy-rust';
+const HEAVY = 'loadouttest.dummy-heavy';
+const UNWANTED = 'loadouttest.dummy-unwanted';
+const BASE = 'loadouttest.dummy-base';
+const DEP = 'loadouttest.dummy-dep';
 
 const ud = path.join(DIR, 'ud');
 const exts = path.join(DIR, 'exts');
@@ -59,7 +63,8 @@ const pack = (cwd, out, extra = []) => {
   execFileSync(process.execPath, [VSCE, 'package', '--no-dependencies', ...extra, '-o', out], { cwd, stdio: 'ignore' });
   cli(['--user-data-dir', ud, '--extensions-dir', exts, '--install-extension', out]);
 };
-for (const name of ['dummy-on', 'dummy-off', 'dummy-rust', 'dummy-heavy']) {
+// dummy-dep은 dummy-base가 필요하므로 base를 먼저 설치한다.
+for (const name of ['dummy-on', 'dummy-off', 'dummy-rust', 'dummy-heavy', 'dummy-unwanted', 'dummy-base', 'dummy-dep']) {
   pack(path.join(ROOT, 'test', 'fixtures', name), path.join(DIR, `${name}.vsix`), ['--allow-missing-repository', '--skip-license']);
 }
 if (OPEN_MODE) {
@@ -72,9 +77,15 @@ if (OPEN_MODE) {
 const globalDb = new DatabaseSync(path.join(ud, 'User', 'globalStorage', 'state.vscdb'));
 globalDb.exec('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)');
 globalDb.prepare('INSERT OR REPLACE INTO ItemTable VALUES (?, ?)').run('extensionsIdentifiers/disabled', JSON.stringify([{ id: OFF }]));
+// "비슷한 다른 폴더에서 heavy를 껐다"는 학습 기록을 미리 넣어 둔다(확장의 globalState는 확장 ID 키에 JSON으로 저장된다).
+const learned = [{ folder: path.join(DIR, 'elsewhere'), name: 'elsewhere', signature: ['package.json'], off: [HEAVY], on: [], time: Date.now() }];
+globalDb.prepare('INSERT OR REPLACE INTO ItemTable VALUES (?, ?)').run('newdlops.extension-loadout', JSON.stringify({ 'extensionLoadout.learned': learned }));
 globalDb.close();
 
 fs.writeFileSync(path.join(ws, '.vscode', 'extension-loadout.json'), JSON.stringify({ enable: [OFF], disable: [ON] }, null, 2));
+// 저장소 권장: 설치되지 않은 확장 하나를 권장하고, UNWANTED는 원치 않는다고 적는다. package.json은 스택 표식이다.
+fs.writeFileSync(path.join(ws, '.vscode', 'extensions.json'), '{\n  // repo recommendations\n  "recommendations": ["loadouttest.not-installed"],\n  "unwantedRecommendations": ["' + UNWANTED + '"]\n}\n');
+fs.writeFileSync(path.join(ws, 'package.json'), '{"name":"ws","private":true}');
 
 const base = [
   '--user-data-dir', ud,
@@ -148,7 +159,12 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const checks = [
   ['0단계: ws2 준비', lines.some((l) => l.ws2 === 'prepared')],
   ['1단계: 시작 상태(전역 ON 실행, 전역 OFF 미실행)', state('1')?.on === true && state('1')?.off === false],
-  ['1단계: Rust 전용 확장만 "필요 없음"으로 추천', same(at('1', 'suggestions'), [RUST])],
+  ['1단계: "필요 없음" 추천 = Rust 전용 확장 + 저장소가 원치 않는 확장', same(at('1', 'suggestions'), [RUST, UNWANTED])],
+  ['1단계: 스택 표식(package.json) 감지', same(at('1', 'recs')?.signature, ['package.json'])],
+  ['1단계: 비슷한 폴더에서 끈 확장 제안(내 결정 학습)', same(at('1', 'recs')?.learned, [HEAVY])],
+  ['1단계: 목록에 메모리·추천·학습·저장소 권장 묶음', ['memory', 'suggest', 'learned', 'repo'].every((g) => (at('1', 'tree') ?? []).some((x) => x.group === g))],
+  ['1단계: 설치되지 않은 권장 확장 표시', (at('1', 'tree') ?? []).find((x) => x.group === 'repo')?.items.includes('missing:loadouttest.not-installed')],
+  ['1단계: 필터(⚡ always)는 항상 켜지는 확장만', (() => { const g = (at('1', 'treeAlways') ?? []).find((x) => x.group === 'global'); return !!g && g.items.includes(HEAVY) && !g.items.includes(RUST); })()],
   ['1단계: 확장이 띄운 프로세스 메모리 측정(80MB 자식 프로세스)', (at('1', 'heavy')?.bytes ?? 0) >= 60 * 1024 ** 2 && at('1', 'heavy')?.pids >= 1],
   ['1단계: 메모리 압박 수준 읽기', ['normal', 'warn', 'critical'].includes(at('1', 'pressure'))],
   ['2단계: loadout 적용 후 ON 확장 꺼짐', state('2')?.on === false],
@@ -161,6 +177,9 @@ const checks = [
   ['5단계: 다른 폴더(ws2)에도 적용됨', same(at('5', 'ws2'), { enabled: null, disabled: [ON] })],
   ['6단계: 되돌리기로 ws2 원상 복구', same(at('6', 'ws2'), { enabled: null, disabled: null }) && state('6')?.on === false],
   ['7단계: 한 번 더 되돌리기로 이 폴더 원상 복구', state('7')?.on === true && same(state('7')?.config, { enable: [], disable: [] })],
+  ['7단계: 라이브러리를 끄면 그것이 필요한 확장도 함께 꺼짐', same(at('7', 'afterBaseOff')?.disable, [BASE, DEP])],
+  ['7단계: 필요한 확장을 켜면 라이브러리도 함께 켜짐', same(at('7', 'afterDepOn'), { enable: [], disable: [] })],
+  ['7단계: 프리셋 저장 후 다른 상태에서 적용하면 그대로 돌아옴', same(at('7', 'afterPreset'), { enable: [OFF], disable: [ON] })],
   ['오류 없음', !lines.some((l) => l.error)],
   ['격리 VS Code 종료됨', !alive()],
 ];

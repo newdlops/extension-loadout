@@ -39,6 +39,15 @@ export function activate(context: vscode.ExtensionContext): LoadoutController | 
   reg('extensionLoadout.suggest', () => c.suggest());
   reg('extensionLoadout.disableSuggested', () => c.turnOffSuggested());
   reg('extensionLoadout.disableSelected', () => c.turnOffSelected());
+  reg('extensionLoadout.disableLearned', () => c.turnOffLearned());
+  reg('extensionLoadout.installRecommended', (n?: { kind: string; id: string } | string) => {
+    const id = typeof n === 'string' ? n : n?.id;
+    if (id) void c.installRecommended(id);
+  });
+  reg('extensionLoadout.savePreset', () => c.savePreset());
+  reg('extensionLoadout.applyPreset', () => c.applyPreset());
+  reg('extensionLoadout.deletePreset', () => c.deletePreset());
+  reg('extensionLoadout.viewOptions', () => c.chooseViewOptions());
   reg('extensionLoadout.clearSelection', () => c.tree.clearSelection());
   reg('extensionLoadout.enableHere', (n?: unknown, many?: unknown) => set(n, many, 'on'));
   reg('extensionLoadout.disableHere', (n?: unknown, many?: unknown) => set(n, many, 'off'));
@@ -62,6 +71,27 @@ export function activate(context: vscode.ExtensionContext): LoadoutController | 
   reg('_extensionLoadout.suggestions', async () => (await c.currentSuggestions()).map((x) => x.id));
   reg('_extensionLoadout.memory', async () => (await c.measureMemory()).map((m) => ({ id: m.id, bytes: m.bytes, pids: m.pids.length, all: m.allWindowsBytes })));
   reg('_extensionLoadout.pressure', () => c.checkPressure());
+  // 의존 관계 확인을 묻지 않고(all/only) 바꾼다.
+  reg('_extensionLoadout.set', (ids: string[], value: Override | undefined, mode: 'all' | 'only' = 'all') => c.set(ids, value, mode));
+  reg('_extensionLoadout.savePreset', (name: string) => c.savePreset(name));
+  reg('_extensionLoadout.applyPreset', (name: string) => c.applyPreset(name));
+  reg('_extensionLoadout.presets', () => c.presets().map((p) => ({ name: p.name, rules: p.rules })));
+  reg('_extensionLoadout.recommendations', async () => {
+    await c.currentSuggestions();
+    const r = c.repoRecommendations();
+    return { recommended: [...r.recommended], unwanted: [...r.unwanted], learned: c.learnedList().map((x) => x.id), signature: await c.folderSignature() };
+  });
+  reg('_extensionLoadout.setViewOptions', (opts: object) => c.setViewOptions(opts));
+  reg('_extensionLoadout.tree', async () => {
+    const out: object[] = [];
+    for (const n of await c.tree.getChildren()) {
+      if (n.kind === 'notice') out.push({ notice: n.label });
+      if (n.kind !== 'group') continue;
+      const kids = await c.tree.getChildren(n);
+      out.push({ group: n.group, items: kids.map((k) => (k.kind === 'ext' ? k.row.id : k.kind === 'missing' ? `missing:${k.id}` : `notice:${k.kind === 'notice' ? k.label : ''}`)) });
+    }
+    return out;
+  });
   reg('_extensionLoadout.select', (ids: string[]) => c.tree.select(ids));
   reg('_extensionLoadout.applyOnQuit', () => c.applyOnQuit());
   reg('_extensionLoadout.undo', () => c.undo(false));

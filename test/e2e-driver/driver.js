@@ -66,6 +66,11 @@ exports.activate = async (context) => {
       const memory = await run('_extensionLoadout.memory');
       log({ phase, heavy: memory.find((m) => m.id === 'loadouttest.dummy-heavy') ?? null });
       log({ phase, pressure: (await run('_extensionLoadout.pressure')).level });
+      log({ phase, recs: await run('_extensionLoadout.recommendations') });
+      log({ phase, tree: await run('_extensionLoadout.tree') });
+      await run('_extensionLoadout.setViewOptions', { show: 'always' });
+      log({ phase, treeAlways: await run('_extensionLoadout.tree') });
+      await run('_extensionLoadout.setViewOptions', { show: 'all' });
       setPhase('2');
       await run('extensionLoadout.applyAndRestart');
     } else if (phase === '2') {
@@ -99,6 +104,17 @@ exports.activate = async (context) => {
       setPhase('7');
       await run('_extensionLoadout.undo');
     } else {
+      // 의존 관계: 라이브러리를 끄면 필요한 확장도 함께, 필요한 확장을 켜면 라이브러리도 함께.
+      await run('_extensionLoadout.set', ['loadouttest.dummy-base'], 'off', 'all');
+      log({ phase, afterBaseOff: readConfig() });
+      await run('_extensionLoadout.set', ['loadouttest.dummy-dep'], undefined, 'all');
+      log({ phase, afterDepOn: readConfig() });
+      // 프리셋: 저장 → 다른 상태로 바꿈 → 적용하면 저장한 상태로.
+      fs.writeFileSync(config, JSON.stringify({ enable: [OFF], disable: [ON] }));
+      await run('_extensionLoadout.savePreset', 'e2e');
+      fs.writeFileSync(config, JSON.stringify({ enable: [], disable: [RUST] }));
+      await run('_extensionLoadout.applyPreset', 'e2e');
+      log({ phase, afterPreset: readConfig() });
       setPhase('done');
       await quit();
     }

@@ -4,14 +4,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { activationText } from './catalog';
+import { dependentsOf, missingDependencies, packMembers } from './deps';
+import { LearnedEntry, LearnedSuggestion, MARKER_GLOB, learnedSuggestions, recordDecision, signatureOf } from './learning';
+import { RepoRecommendations, mergeRecommendations, parseRecommendations } from './repoRecs';
+import { VENDORED_DIRS } from './recommend';
 import { StorageEntry, gitWorktrees, latestStoragePerFolder, listWorkspaceStorages, samePath } from './folders';
 import { HistoryEntry, KEYS, pushHistory, undoTargets } from './history';
 import {
   LoadoutChange,
+  LoadoutRules,
   Override,
   Overrides,
   changesFromSelection,
   editLoadoutText,
+  serializeRules,
   normalizeId,
   overridesFromStored,
   parseStoredIdentifiers,
@@ -29,6 +35,23 @@ import { LoadoutTree, Node, summaryOf } from './tree';
 
 const t = vscode.l10n.t;
 const HISTORY_KEY = 'extensionLoadout.history';
+const PRESETS_KEY = 'extensionLoadout.presets';
+const LEARNED_KEY = 'extensionLoadout.learned';
+const VIEW_KEY = 'extensionLoadout.viewOptions';
+
+export interface Preset {
+  name: string;
+  rules: LoadoutRules;
+  savedAt: number;
+}
+
+export interface ViewOptions {
+  show: 'all' | 'running' | 'always' | 'memory';
+  sort: 'name' | 'memory';
+}
+
+/** 의존 관계 확인을 어떻게 할지. ask: 물어본다, all: 묻지 않고 함께, only: 묻지 않고 요청한 것만. */
+export type CascadeMode = 'ask' | 'all' | 'only';
 const plural = (n: number) => (n === 1 ? t('1 extension') : t('{0} extensions', n));
 
 export class LoadoutController implements vscode.Disposable {
@@ -49,6 +72,9 @@ export class LoadoutController implements vscode.Disposable {
   /** 이번 세션에서 알림을 띄운 가장 높은 압박 수준. */
   private notifiedLevel: PressureLevel = 'normal';
   private pressureTimer?: NodeJS.Timeout;
+  private repo: RepoRecommendations = { recommended: new Set(), unwanted: new Set() };
+  private learned: LearnedSuggestion[] = [];
+  private signature?: Promise<string[]>;
 
   constructor(readonly context: vscode.ExtensionContext) {
     this.model = new LoadoutModel(context);
@@ -79,8 +105,12 @@ export class LoadoutController implements vscode.Disposable {
         this.tree.invalidate();
       }),
       this.tree.onDidLoad((snap) => {
-        for (const v of this.views) v.description = snap ? summaryOf(snap) : undefined;
-        if (snap && !this.suggestions) void this.findSuggestions(snap);
+        for (const v of this.views) v.description = snap ? this.viewDescription(snap) : undefined;
+        // 저장소 권장(원치 않음)을 읽은 뒤에 추천을 계산한다.
+        if (snap)
+          void this.loadRepoAndLearned(snap).then(() => {
+            if (!this.suggestions) void this.findSuggestions(snap);
+          });
         // 메모리는 화면이 그려질 때, 마지막으로 잰 지 1분이 지났을 때만 다시 잰다.
         if (snap && (!this.memory || Date.now() - this.memory.at > 60_000)) void this.measureMemory();
         this.changed.fire();
@@ -97,6 +127,9 @@ export class LoadoutController implements vscode.Disposable {
     );
     this.watchConfigFiles();
     this.startPressureWatch();
+    // 프리셋은 Settings Sync로 다른 컴퓨터에도 가져간다.
+    context.globalState.setKeysForSync([PRESETS_KEY, VIEW_KEY]);
+    this.tree.setViewOptions(this.viewOptions());
     try {
       ensureQuitHelper(context);
     } catch (e) {
@@ -342,18 +375,79 @@ export class LoadoutController implements vscode.Disposable {
   }
 
   /** "켬/끔/전역 따름" 요청을 저장할 변경으로. 전역 설정과 같은 상태로 강제하는 것은 전역 따름으로 정리한다. */
-  async set(ids: string[], value: Override | undefined): Promise<number> {
+  async set(ids: string[], value: Override | undefined, mode: CascadeMode = 'ask'): Promise<number> {
     const globallyDisabled = this.model.readGloballyDisabled();
     const changes = [...new Set(ids.map(normalizeId))].map((id) => ({
       id,
       value: value === undefined || (value === 'on') === !globallyDisabled.has(id) ? undefined : value,
     }));
-    return this.applyChanges(await this.expandChanges(changes));
+    return this.applyChanges(await this.expandChanges(changes, mode));
   }
 
-  /** 의존 관계 등으로 변경을 넓힐 자리(Tier 3에서 채운다). */
-  protected async expandChanges(changes: LoadoutChange[]): Promise<LoadoutChange[]> {
-    return changes;
+  /**
+   * 의존 관계로 변경을 넓힌다.
+   * - 끄는 확장을 필요로 하는 켜진 확장이 있으면 함께 끌지 묻는다(그대로 두면 VS Code에서 동작하지 못한다).
+   * - 확장 팩을 끄면 팩에 든 확장도 끌지 묻는다.
+   * - 켜는 확장이 필요로 하는 확장과, 켜는 팩의 확장은 함께 켠다.
+   */
+  async expandChanges(changes: LoadoutChange[], mode: CascadeMode = 'ask'): Promise<LoadoutChange[]> {
+    const snap = await this.snapshot();
+    if (!snap) return changes;
+    const out = new Map(changes.map((c) => [c.id, c]));
+    // 바뀐 뒤의 상태로 판단한다.
+    const after = snap.rows.map((r) => {
+      const c = out.get(r.id);
+      const override = c ? c.value : r.override;
+      return { ...r, desiredOn: override ? override === 'on' : r.globallyEnabled };
+    });
+    const byId = new Map(after.map((r) => [r.id, r]));
+    const offFor = (id: string): LoadoutChange => ({ id, value: byId.get(id)?.globallyEnabled ? 'off' : undefined });
+    const onFor = (id: string): LoadoutChange => ({ id, value: byId.get(id)?.globallyEnabled ? undefined : 'on' });
+    const name = (id: string) => byId.get(id)?.displayName ?? id;
+    const turningOff = [...out.values()].filter((c) => !(byId.get(c.id)?.desiredOn ?? true)).map((c) => c.id);
+    const turningOn = [...out.values()].filter((c) => byId.get(c.id)?.desiredOn).map((c) => c.id);
+
+    const dependents = dependentsOf(after, turningOff);
+    if (dependents.length) {
+      let choice: 'all' | 'only' | undefined = mode === 'ask' ? undefined : mode;
+      if (mode === 'ask') {
+        const all = t('Turn Them Off Too');
+        const only = t('Only the Ones I Chose');
+        const go = await vscode.window.showWarningMessage(
+          t('{0} needed by other extensions that are on here.', turningOff.map(name).join(', ')),
+          { modal: true, detail: t('{0} cannot work without it. Turn them off too?', dependents.map(name).join(', ')) },
+          all,
+          only,
+        );
+        if (!go) return [];
+        choice = go === all ? 'all' : 'only';
+      }
+      if (choice === 'all') for (const id of dependents) out.set(id, offFor(id));
+    }
+
+    const members = packMembers(after, turningOff, false).filter((m) => !out.has(m));
+    if (members.length) {
+      let withMembers = mode === 'all';
+      if (mode === 'ask') {
+        const yes = t('Pack and Its Extensions');
+        const go = await vscode.window.showInformationMessage(
+          t('Also turn off the {0} extensions in this pack?', members.length),
+          { modal: true, detail: members.map(name).join(', ') },
+          yes,
+          t('Only the Pack'),
+        );
+        if (!go) return [];
+        withMembers = go === yes;
+      }
+      if (withMembers) for (const id of members) out.set(id, offFor(id));
+    }
+
+    const needed = [...missingDependencies(after, turningOn), ...packMembers(after, turningOn, true)].filter((id) => !out.has(id));
+    if (needed.length) {
+      for (const id of needed) out.set(id, onFor(id));
+      if (mode === 'ask') void vscode.window.showInformationMessage(t('Also turned on {0}, which {1} need.', needed.map(name).join(', '), turningOn.map(name).join(', ')));
+    }
+    return [...out.values()];
   }
 
   /** 여러 개를 바꾼 뒤에는 적용 안내를 한 번 띄운다(기다리지 않는다). */
@@ -434,8 +528,179 @@ export class LoadoutController implements vscode.Disposable {
     this.afterApply(targets);
   }
 
-  /** 적용 직후 훅(내 결정 학습 등, Tier 3). */
-  protected afterApply(_targets: PlanTarget[]): void {}
+  /** 적용할 때마다 이 폴더의 스택과 결정을 기록해 비슷한 폴더에서 제안한다. */
+  private afterApply(_targets: PlanTarget[]): void {
+    const folder = this.model.workspaceFolder;
+    const st = this.lastStatus;
+    if (!folder || !st) return;
+    void this.folderSignature().then((signature) => {
+      if (!signature.length) return;
+      const entry: LearnedEntry = {
+        folder: folder.uri.fsPath,
+        name: folder.name,
+        signature,
+        off: [...st.overrides].filter(([, v]) => v === 'off').map(([id]) => id),
+        on: [...st.overrides].filter(([, v]) => v === 'on').map(([id]) => id),
+        time: Date.now(),
+      };
+      void this.context.globalState.update(LEARNED_KEY, recordDecision(this.learnedEntries(), entry, (a, b) => samePath(a, b)));
+    });
+  }
+
+  learnedEntries(): LearnedEntry[] {
+    return this.context.globalState.get<LearnedEntry[]>(LEARNED_KEY, []);
+  }
+
+  /** 이 폴더의 스택(표식 파일). 창마다 한 번만 찾는다. */
+  folderSignature(): Promise<string[]> {
+    if (!this.signature) {
+      this.signature = Promise.resolve(vscode.workspace.findFiles(MARKER_GLOB, VENDORED_DIRS, 300)).then(
+        (uris) => signatureOf(uris.map((u) => vscode.workspace.asRelativePath(u, false))),
+        (): string[] => [],
+      );
+    }
+    return this.signature;
+  }
+
+  /** 저장소 권장(extensions.json)과 내 결정에서 배운 제안을 읽어 화면에 넘긴다. */
+  private async loadRepoAndLearned(snap: LoadoutSnapshot): Promise<void> {
+    const texts: { text: string; ws: boolean }[] = [];
+    for (const f of vscode.workspace.workspaceFolders ?? []) {
+      if (f.uri.scheme !== 'file') continue;
+      try {
+        texts.push({ text: await fs.promises.readFile(path.join(f.uri.fsPath, '.vscode', 'extensions.json'), 'utf8'), ws: false });
+      } catch {
+        // 없음
+      }
+    }
+    const wf = vscode.workspace.workspaceFile;
+    if (wf?.scheme === 'file') {
+      try {
+        texts.push({ text: await fs.promises.readFile(wf.fsPath, 'utf8'), ws: true });
+      } catch {
+        // 없음
+      }
+    }
+    this.repo = mergeRecommendations(texts.map((x) => parseRecommendations(x.text, x.ws)));
+    const folder = this.model.workspaceFolder;
+    const sig = await this.folderSignature();
+    this.learned = folder ? learnedSuggestions(this.learnedEntries(), sig, folder.uri.fsPath, snap.rows, (a, b) => samePath(a, b)) : [];
+    this.tree.setRepoAndLearned(this.repo, this.learned);
+    this.changed.fire();
+  }
+
+  repoRecommendations(): RepoRecommendations {
+    return this.repo;
+  }
+
+  learnedList(): LearnedSuggestion[] {
+    return this.learned;
+  }
+
+  // -----------------------------------------------------------------------------------------
+  // 프리셋
+
+  presets(): Preset[] {
+    return this.context.globalState.get<Preset[]>(PRESETS_KEY, []);
+  }
+
+  async savePreset(name?: string): Promise<void> {
+    const st = await this.requireWorkspace();
+    if (!st) return;
+    const presetName =
+      name ??
+      (await vscode.window.showInputBox({
+        title: t('Save this loadout as a preset'),
+        prompt: t('Presets can be applied to any folder and follow you through Settings Sync.'),
+        value: vscode.workspace.name ?? '',
+        validateInput: (v) => (v.trim() ? undefined : t('Enter a name.')),
+      }));
+    if (!presetName?.trim()) return;
+    const rules: LoadoutRules = st.configExists
+      ? { enable: [...st.rules.enable], disable: [...st.rules.disable], notes: { ...st.rules.notes } }
+      : {
+          enable: [...st.overrides].filter(([, v]) => v === 'on').map(([id]) => id),
+          disable: [...st.overrides].filter(([, v]) => v === 'off').map(([id]) => id),
+          notes: {},
+        };
+    const others = this.presets().filter((p) => p.name !== presetName.trim());
+    await this.context.globalState.update(PRESETS_KEY, [...others, { name: presetName.trim(), rules, savedAt: Date.now() }].sort((a, b) => a.name.localeCompare(b.name)));
+    void vscode.window.showInformationMessage(t('Saved preset "{0}".', presetName.trim()));
+  }
+
+  async applyPreset(name?: string): Promise<void> {
+    const st = await this.requireWorkspace();
+    if (!st) return;
+    const list = this.presets();
+    if (!list.length) {
+      void vscode.window.showInformationMessage(t('No presets yet. Use "Save Loadout as Preset" first.'));
+      return;
+    }
+    const preset =
+      list.find((p) => p.name === name) ??
+      (
+        await vscode.window.showQuickPick(
+          list.map((p) => ({
+            label: p.name,
+            description: t('{0} on · {1} off', p.rules.enable.length, p.rules.disable.length),
+            detail: [...p.rules.enable.map((x) => `+${x}`), ...p.rules.disable.map((x) => `−${x}`)].slice(0, 8).join('  '),
+            preset: p,
+          })),
+          { title: t('Apply a preset to this folder'), placeHolder: t('Replaces this folder\'s loadout file.') },
+        )
+      )?.preset;
+    if (!preset) return;
+    await this.model.writeConfigText(serializeRules(preset.rules));
+    await this.refresh();
+    this.offerApply(t('Applied preset "{0}" to the loadout file.', preset.name));
+  }
+
+  async deletePreset(): Promise<void> {
+    const list = this.presets();
+    const pick = await vscode.window.showQuickPick(list.map((p) => ({ label: p.name, preset: p })), { title: t('Delete a preset') });
+    if (!pick) return;
+    await this.context.globalState.update(PRESETS_KEY, list.filter((p) => p !== pick.preset));
+  }
+
+  // -----------------------------------------------------------------------------------------
+  // 보기 옵션
+
+  viewOptions(): ViewOptions {
+    return { show: 'all', sort: 'name', ...this.context.globalState.get<Partial<ViewOptions>>(VIEW_KEY, {}) };
+  }
+
+  async setViewOptions(next: Partial<ViewOptions>): Promise<void> {
+    const opts = { ...this.viewOptions(), ...next };
+    await this.context.globalState.update(VIEW_KEY, opts);
+    this.tree.setViewOptions(opts);
+    const snap = await this.snapshot();
+    for (const v of this.views) v.description = snap ? this.viewDescription(snap) : undefined;
+    if (opts.show === 'memory' || opts.sort === 'memory') void this.measureMemory();
+  }
+
+  async chooseViewOptions(): Promise<void> {
+    const cur = this.viewOptions();
+    const mark = (on: boolean) => (on ? '$(check) ' : '$(blank) ');
+    type Item = vscode.QuickPickItem & { apply?: Partial<ViewOptions> };
+    const items: Item[] = [
+      { label: t('Show'), kind: vscode.QuickPickItemKind.Separator },
+      { label: `${mark(cur.show === 'all')}${t('All extensions')}`, apply: { show: 'all' } },
+      { label: `${mark(cur.show === 'running')}${t('Running in this window')}`, apply: { show: 'running' } },
+      { label: `${mark(cur.show === 'always')}${t('Start in every window (⚡ always)')}`, apply: { show: 'always' } },
+      { label: `${mark(cur.show === 'memory')}${t('Using memory now')}`, apply: { show: 'memory' } },
+      { label: t('Sort'), kind: vscode.QuickPickItemKind.Separator },
+      { label: `${mark(cur.sort === 'name')}${t('By name')}`, apply: { sort: 'name' } },
+      { label: `${mark(cur.sort === 'memory')}${t('By memory, biggest first')}`, apply: { sort: 'memory' } },
+    ];
+    const pick = await vscode.window.showQuickPick(items, { title: t('Extension Loadout view') });
+    if (pick?.apply) await this.setViewOptions(pick.apply);
+  }
+
+  private viewDescription(snap: LoadoutSnapshot): string {
+    const opts = this.viewOptions();
+    const show = { all: '', running: t('running only'), always: t('⚡ always only'), memory: t('using memory only') }[opts.show];
+    return [summaryOf(snap), show, opts.sort === 'memory' ? t('by memory') : ''].filter(Boolean).join(' · ');
+  }
 
   private readBefore(dbPath: string): Record<string, string | null> {
     try {
@@ -609,10 +874,19 @@ export class LoadoutController implements vscode.Disposable {
   // 추천
 
   findSuggestions(snap: LoadoutSnapshot): Promise<Suggestion[]> {
-    const p = computeSuggestions(snap, this.output).catch((e) => {
-      this.output.error('Could not check which extensions this folder needs', e as Error);
-      return [] as Suggestion[];
-    });
+    const p = computeSuggestions(snap, this.output)
+      .catch((e) => {
+        this.output.error('Could not check which extensions this folder needs', e as Error);
+        return [] as Suggestion[];
+      })
+      .then((list) => {
+        // 저장소가 "원하지 않음"으로 적은 확장도 확실한 근거다.
+        const seen = new Set(list.map((x) => x.id));
+        const unwanted = snap.rows
+          .filter((r) => this.repo.unwanted.has(r.id) && !seen.has(r.id) && r.desiredOn && r.override !== 'on' && !r.locked)
+          .map((r) => ({ id: r.id, reason: t('This repository lists it under unwantedRecommendations') }));
+        return [...list, ...unwanted];
+      });
     this.suggestions = p;
     void p.then((list) => {
       this.tree.setSuggestions(list);
@@ -624,7 +898,9 @@ export class LoadoutController implements vscode.Disposable {
   async currentSuggestions(): Promise<Suggestion[]> {
     if (this.suggestions) return this.suggestions;
     const snap = await this.snapshot();
-    return snap ? this.findSuggestions(snap) : [];
+    if (!snap) return [];
+    await this.loadRepoAndLearned(snap);
+    return this.findSuggestions(snap);
   }
 
   async suggest(): Promise<void> {
@@ -641,6 +917,17 @@ export class LoadoutController implements vscode.Disposable {
     const ids = this.tree.activeSuggestions().map((x) => x.row.id);
     const n = await this.set(ids, 'off');
     if (n) this.offerApply(t('Turned off {0} for this folder.', plural(n)));
+  }
+
+  async turnOffLearned(): Promise<void> {
+    const ids = this.tree.activeLearned().map((x) => x.row.id);
+    const n = await this.set(ids, 'off');
+    if (n) this.offerApply(t('Turned off {0} for this folder.', plural(n)));
+  }
+
+  async installRecommended(id: string): Promise<void> {
+    await vscode.commands.executeCommand('workbench.extensions.installExtension', id);
+    this.tree.invalidate();
   }
 
   async turnOffSelected(): Promise<void> {

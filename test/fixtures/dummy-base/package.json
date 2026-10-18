@@ -1,0 +1,1 @@
+{"name":"dummy-base","displayName":"Loadout Test Dummy (library)","publisher":"loadouttest","version":"0.0.1","license":"MIT","engines":{"vscode":"^1.85.0"},"activationEvents":["onStartupFinished"],"main":"./index.js","repository":{"type":"git","url":"https://example.invalid/dummy"}}
