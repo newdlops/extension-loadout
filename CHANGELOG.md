@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.0
+
+**See what each extension costs**
+- *Memory in this window*: memory of the processes each extension started (language servers, daemons), in this window and all windows, using the real footprint (compressed memory on macOS, swap on Linux). Heavy extensions are highlighted (`extensionLoadout.heavyThresholdMB`).
+- Memory pressure watch: the status bar shows the heaviest extension when the system is tight, with one notification per session (`extensionLoadout.memoryWatch.*`).
+- **Restart Extension Host** frees extension memory in this window without restarting VS Code.
+
+**Apply your way, safely**
+- **Apply When VS Code Quits**: nothing restarts now; a tiny waiting helper applies the loadout the next time you quit. Cancel from the status bar.
+- **Apply to Other Folders…**: one restart also updates the other git worktrees of the repository and any other folder you pick.
+- **Undo Last Apply** and **Reset Folder to Global Settings**.
+
+**Smarter suggestions**
+- `unwantedRecommendations` in `.vscode/extensions.json` count as certain suggestions; recommended extensions that are off here or not installed get their own group with an install button, and a ★ elsewhere.
+- *You usually turn these off*: learned from what you turned off in folders with a similar stack.
+- Dependencies: turning off an extension others need asks to turn those off too; turning one on also turns on what it needs; packs expand and handle their members.
+
+**More control**
+- Loadout files accept patterns (`ms-toolsai.*`), `!ID` exclusions and `notes`; edits from the panel keep them, and comments too.
+- Presets: save, apply and delete loadouts; synced with Settings Sync.
+- Filter and sort: all, running here, ⚡ always, using memory; by name or by memory.
+- **Loadout Dashboard**: every extension in one sortable, filterable table with bulk actions.
+- Multi-root workspaces (`name.loadout.json` next to the workspace file, folder files merged) and VS Code profiles.
+- Korean UI.
+
+**Engineering**
+- End-to-end tests run on macOS, Ubuntu and Windows in CI, including the restart path on all three.
+
 ## 0.4.0
 
 - **Select, then turn off in one go.** Every extension row has a selection checkbox, and a group's checkbox selects the whole group. While something is selected, **Turn Off Selected** and **Clear Selection** appear at the top of the panel, with a "N selected" note.

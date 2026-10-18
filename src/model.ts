@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { InstalledExtension, catalogSourcesFor, extensionFromManifest, readInstalledExtensions } from './catalog';
+import { CatalogSource, InstalledExtension, extensionFromManifest, pickProfile, profileSources, readInstalledExtensions } from './catalog';
 import {
   DISABLED_KEY,
   ENABLED_KEY,
@@ -94,8 +94,55 @@ const readText = (file: string): string | undefined => {
   }
 };
 
+const readJsonFile = <T>(file: string): T | undefined => {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
+  } catch {
+    return undefined;
+  }
+};
+
 export class LoadoutModel {
+  private profile?: Promise<string | undefined>;
+
   constructor(private readonly context: vscode.ExtensionContext) {}
+
+  /** .../User. 확장의 globalStorage는 프로필과 관계없이 User/globalStorage 아래에 있다. */
+  get userDir(): string {
+    return path.dirname(path.dirname(this.context.globalStorageUri.fsPath));
+  }
+
+  /** 이 창의 VS Code 프로필 폴더 이름(기본 프로필이면 undefined). 창마다 한 번만 판별한다. */
+  profileLocation(): Promise<string | undefined> {
+    this.profile ??= this.detectProfile().catch(() => undefined);
+    return this.profile;
+  }
+
+  private async detectProfile(): Promise<string | undefined> {
+    const storage = readJsonFile<{
+      userDataProfiles?: { location: string; name?: string }[];
+      profileAssociations?: { workspaces?: Record<string, string> };
+    }>(path.join(this.userDir, 'globalStorage', 'storage.json'));
+    const profiles = storage?.userDataProfiles ?? [];
+    if (!profiles.length) return undefined;
+    // 1) 이 작업 영역에 프로필을 지정해 두었으면 그 기록을 쓴다.
+    const key = (vscode.workspace.workspaceFile ?? vscode.workspace.workspaceFolders?.[0]?.uri)?.toString();
+    const assoc = Object.entries(storage?.profileAssociations?.workspaces ?? {}).find(([k]) => key && vscode.Uri.parse(k).toString() === key)?.[1];
+    if (assoc) return profiles.find((p) => p.location === assoc || path.basename(p.location) === assoc)?.location;
+    // 2) 기록이 없으면(명령줄 --profile 등) 켜져 있는 확장으로 추론한다.
+    const extDir = this.extensionsDir();
+    const inDir = (p: string) => path.relative(extDir, p).split(path.sep)[0] !== '..' && !path.isAbsolute(path.relative(extDir, p));
+    const running = vscode.extensions.all.filter((e) => !e.packageJSON?.isBuiltin && inDir(e.extensionPath)).map((e) => normalizeId(e.id));
+    const idsOf = (sources: CatalogSource[]) =>
+      sources.flatMap((src) =>
+        (readJsonFile<{ identifier?: { id?: string }; metadata?: { isApplicationScoped?: boolean } }[]>(src.index) ?? [])
+          .filter((e) => !src.applicationScopedOnly || e.metadata?.isApplicationScoped)
+          .map((e) => normalizeId(e.identifier?.id ?? ''))
+          .filter(Boolean),
+      );
+    const candidates = [undefined, ...profiles.map((p) => p.location)].map((location) => ({ location, ids: idsOf(profileSources(extDir, this.userDir, location)) }));
+    return pickProfile(candidates, running);
+  }
 
   get workspaceFolder(): vscode.WorkspaceFolder | undefined {
     return vscode.workspace.workspaceFolders?.[0];
@@ -129,8 +176,10 @@ export class LoadoutModel {
     return uri ? path.dirname(path.dirname(uri.fsPath)) : undefined;
   }
 
-  get globalDbPath(): string {
-    return path.join(path.dirname(this.context.globalStorageUri.fsPath), 'state.vscdb');
+  /** 전역 확장 활성 상태가 든 저장소. 다른 프로필은 그 프로필의 globalStorage에 있다. */
+  async globalDbPath(): Promise<string> {
+    const profile = await this.profileLocation();
+    return profile ? path.join(this.userDir, 'profiles', profile, 'globalStorage', 'state.vscdb') : path.join(this.userDir, 'globalStorage', 'state.vscdb');
   }
 
   get selfId(): string {
@@ -148,8 +197,8 @@ export class LoadoutModel {
     return path.join(os.homedir(), dataFolder, 'extensions');
   }
 
-  installed(): Promise<InstalledExtension[]> {
-    return readInstalledExtensions(catalogSourcesFor(this.extensionsDir(), this.context.globalStorageUri.fsPath));
+  async installed(): Promise<InstalledExtension[]> {
+    return readInstalledExtensions(profileSources(this.extensionsDir(), this.userDir, await this.profileLocation()));
   }
 
   /** VS Code에 들어 있는 기본 확장(메모리 표시용). */
@@ -165,9 +214,10 @@ export class LoadoutModel {
     return { enabled: parseStoredIdentifiers(v[ENABLED_KEY]), disabled: parseStoredIdentifiers(v[DISABLED_KEY]) };
   }
 
-  readGloballyDisabled(): Set<string> {
-    if (!fs.existsSync(this.globalDbPath)) return new Set();
-    const v = readItems(this.globalDbPath, [DISABLED_KEY])[DISABLED_KEY];
+  async readGloballyDisabled(): Promise<Set<string>> {
+    const db = await this.globalDbPath();
+    if (!fs.existsSync(db)) return new Set();
+    const v = readItems(db, [DISABLED_KEY])[DISABLED_KEY];
     return new Set(parseStoredIdentifiers(v).map((e) => normalizeId(e.id)));
   }
 
@@ -224,7 +274,7 @@ export class LoadoutModel {
   async snapshot(status?: LoadoutStatus): Promise<LoadoutSnapshot> {
     const st = status ?? (await this.status());
     const { overrides } = st;
-    const globallyDisabled = this.readGloballyDisabled();
+    const globallyDisabled = await this.readGloballyDisabled();
     const loaded = new Map(vscode.extensions.all.map((e) => [normalizeId(e.id), e]));
     const installed = await this.installed();
     const rows: ExtensionRow[] = installed.map((ext) => {

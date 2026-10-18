@@ -182,6 +182,7 @@ tr.selected td {
   border: 0;
   border-radius: 0;
   padding: 2px 8px;
+  white-space: nowrap;
   background: transparent;
   color: var(--vscode-descriptionForeground);
 }
@@ -199,6 +200,15 @@ tr.selected td {
 }
 td.always {
   color: var(--vscode-charts-orange);
+}
+td.now,
+td.starts,
+td.here {
+  white-space: nowrap;
+}
+td.num.heavy {
+  color: var(--vscode-charts-orange);
+  font-weight: 600;
 }
 .running {
   color: var(--vscode-charts-green);

@@ -39,8 +39,37 @@ function ws2Stored(context) {
   return 'not found';
 }
 
+/** 멀티 루트·프로필 시험(scripts/run-e2e-extra.mjs). 한 번 띄워 확인하고 끝낸다. */
+async function extraMode(mode) {
+  await vscode.extensions.getExtension('newdlops.extension-loadout').activate();
+  if (mode === 'multiroot') {
+    const st = await run('_extensionLoadout.state');
+    log({ mode, overrides: st.overrides, conflicts: st.conflicts, location: await run('_extensionLoadout.location') });
+    await run('extensionLoadout.disableHere', RUST);
+    const loc = await run('_extensionLoadout.location');
+    log({ mode, afterEdit: JSON.parse(fs.readFileSync(loc.editable, 'utf8')), stateAfterEdit: (await run('_extensionLoadout.state')).overrides });
+  } else if (mode === 'noop') {
+    // 프로필을 만들기 위해 한 번 띄울 때.
+  } else if (mode === 'profile') {
+    log({ mode, installed: await run('_extensionLoadout.installedIds'), info: await run('_extensionLoadout.catalogInfo') });
+  }
+  fs.writeFileSync(path.join(DIR, `${mode}-done`), '1');
+  await quit();
+}
+
 exports.activate = async (context) => {
   if (!DIR) return;
+  const extra = process.env.EXTENSION_LOADOUT_E2E_MODE;
+  if (extra) {
+    try {
+      await extraMode(extra);
+    } catch (e) {
+      log({ mode: extra, error: String((e && e.stack) || e) });
+      fs.writeFileSync(path.join(DIR, `${extra}-done`), '1');
+      await quit();
+    }
+    return;
+  }
   const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
   if (!folder) return log({ error: 'no folder open' });
   if (WS2 && folder.uri.fsPath.toLowerCase() === WS2.toLowerCase()) {

@@ -267,9 +267,9 @@
       ),
       h('td', { class: 'here' }, h('div', { class: 'segments' }, segment('on', S.on), segment('global', S.follow), segment('off', S.off))),
       h('td', {}, r.globallyEnabled ? S.onGlobally : S.offGlobally),
-      h('td', { class: r.startsAlways ? 'always' : '' }, r.starts),
-      h('td', {}, now),
-      h('td', { class: 'num', title: r.processes ? `${r.processes} ${S.processes} · ${S.allWindows} ${fmt(r.allWindowsMemory)}` : '' }, fmt(r.memory)),
+      h('td', { class: `starts ${r.startsAlways ? 'always' : ''}` }, r.starts),
+      h('td', { class: 'now' }, now),
+      h('td', { class: `num ${data.heavy && r.memory >= data.heavy ? 'heavy' : ''}`, title: r.processes ? `${r.processes} ${S.processes} · ${S.allWindows} ${fmt(r.allWindowsMemory)}` : '' }, fmt(r.memory)),
       h('td', { class: 'why' }, why),
     );
   }

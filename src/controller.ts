@@ -376,7 +376,7 @@ export class LoadoutController implements vscode.Disposable {
 
   /** "켬/끔/전역 따름" 요청을 저장할 변경으로. 전역 설정과 같은 상태로 강제하는 것은 전역 따름으로 정리한다. */
   async set(ids: string[], value: Override | undefined, mode: CascadeMode = 'ask'): Promise<number> {
-    const globallyDisabled = this.model.readGloballyDisabled();
+    const globallyDisabled = await this.model.readGloballyDisabled();
     const changes = [...new Set(ids.map(normalizeId))].map((id) => ({
       id,
       value: value === undefined || (value === 'on') === !globallyDisabled.has(id) ? undefined : value,

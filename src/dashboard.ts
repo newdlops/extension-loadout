@@ -129,6 +129,7 @@ export class Dashboard implements vscode.Disposable {
       missing: snap.missing,
       pressure: pressure.level === 'normal' ? undefined : { level: pressure.level, detail: pressureText(pressure) },
       totalMemory: totalMemory ? formatBytes(totalMemory) : '',
+      heavy: vscode.workspace.getConfiguration('extensionLoadout').get<number>('heavyThresholdMB', 500) * 1024 ** 2,
     };
   }
 

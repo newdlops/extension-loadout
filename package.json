@@ -2,7 +2,7 @@
   "name": "extension-loadout",
   "displayName": "Extension Loadout",
   "description": "%description%",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "newdlops",
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -21,12 +21,17 @@
     "Other"
   ],
   "keywords": [
-    "extensions",
-    "workspace",
-    "enable",
+    "dashboard",
     "disable",
+    "enable",
+    "extensions",
+    "language server",
+    "memory",
+    "performance",
+    "preset",
     "profile",
-    "memory"
+    "workspace",
+    "worktree"
   ],
   "extensionKind": [
     "ui"
@@ -491,7 +496,7 @@
     "check-types": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "tsc -p tsconfig.test.json && node --test --test-reporter=spec \"out/test/unit/*.test.js\"",
-    "test:e2e": "npm run compile && node scripts/run-e2e.mjs",
+    "test:e2e": "npm run compile && node scripts/run-e2e.mjs && node scripts/run-e2e-extra.mjs",
     "vsce:package": "vsce package --no-dependencies",
     "vsce:publish": "vsce publish --no-dependencies",
     "clean": "rm -rf dist out *.vsix",

@@ -17,3 +17,6 @@ package-lock.json
 .codeidx/**
 .zoek*
 media/icon.svg
+media/screenshots/**
+.github/**
+l10n/*.md

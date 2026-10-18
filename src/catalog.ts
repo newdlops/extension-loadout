@@ -221,17 +221,33 @@ export async function readInstalledExtensions(from: string | CatalogSource[]): P
 }
 
 /**
- * 이 창이 쓰는 프로필의 확장 목록 출처. globalStorage 경로가 .../User/profiles/<id>/globalStorage/...이면 그 프로필이다.
- * 다른 프로필은 자기 extensions.json에 더해 기본 목록의 "모든 프로필에 적용" 확장도 쓴다.
+ * 프로필의 확장 목록 출처. 기본 프로필은 확장 폴더의 extensions.json,
+ * 다른 프로필은 User/profiles/<location>/extensions.json에 더해 기본 목록의 "모든 프로필에 적용" 확장.
  */
-export function catalogSourcesFor(extensionsDir: string, globalStoragePath: string): CatalogSource[] {
+export function profileSources(extensionsDir: string, userDir: string, profileLocation?: string): CatalogSource[] {
   const defaultSource: CatalogSource = { index: path.join(extensionsDir, 'extensions.json'), baseDir: extensionsDir };
-  const m = /^(.*[\\/]User)[\\/]profiles[\\/]([^\\/]+)[\\/]globalStorage(?:[\\/]|$)/.exec(globalStoragePath);
-  if (!m) return [defaultSource];
+  if (!profileLocation) return [defaultSource];
   return [
-    { index: path.join(m[1], 'profiles', m[2], 'extensions.json'), baseDir: extensionsDir },
+    { index: path.join(userDir, 'profiles', profileLocation, 'extensions.json'), baseDir: extensionsDir },
     { ...defaultSource, applicationScopedOnly: true },
   ];
+}
+
+/**
+ * 이 창의 프로필을 켜져 있는 확장으로 추론한다. 켜진 확장을 모두 담고 있는 목록 가운데 켜진 비율이 가장 높은 것.
+ * (명령줄 --profile로 연 창은 프로필 연결이 어디에도 기록되지 않는다.) 고를 수 없으면 기본 프로필(undefined).
+ */
+export function pickProfile(candidates: { location?: string; ids: string[] }[], running: string[]): string | undefined {
+  const on = new Set(running);
+  let best: { location?: string; score: number } | undefined;
+  for (const c of candidates) {
+    const ids = new Set(c.ids);
+    if (!ids.size || [...on].some((id) => !ids.has(id))) continue;
+    const score = [...ids].filter((id) => on.has(id)).length / ids.size;
+    // 같은 점수면 기본 프로필을 우선한다.
+    if (!best || score > best.score || (score === best.score && !c.location)) best = { location: c.location, score };
+  }
+  return best?.location;
 }
 
 function compareVersions(a: string, b: string): number {

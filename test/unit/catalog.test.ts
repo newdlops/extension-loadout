@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { activationText, catalogSourcesFor, describeActivation, extensionFromManifest, readInstalledExtensions } from '../../src/catalog';
+import { activationText, describeActivation, extensionFromManifest, pickProfile, profileSources, readInstalledExtensions } from '../../src/catalog';
 
 test('describeActivation tells always-on, triggered and code-less extensions apart', () => {
   assert.deepEqual(describeActivation({ main: './x.js', activationEvents: ['onStartupFinished'] }), {
@@ -69,16 +69,26 @@ test('extensionFromManifest separates extensionDependencies from extensionPack',
   assert.deepEqual(e.packMembers, ['b.member', 'c.member']);
 });
 
-test('catalogSourcesFor uses the profile list plus application-scoped extensions in a non-default profile', () => {
+test('profileSources: default list, or the profile list plus application-scoped default extensions', () => {
   const ext = path.join('/home/u/.vscode/extensions');
   const user = path.join('/home/u/.config/Code/User');
-  assert.deepEqual(catalogSourcesFor(ext, path.join(user, 'globalStorage', 'newdlops.extension-loadout')), [
-    { index: path.join(ext, 'extensions.json'), baseDir: ext },
-  ]);
-  assert.deepEqual(catalogSourcesFor(ext, path.join(user, 'profiles', '-6829', 'globalStorage', 'newdlops.extension-loadout')), [
+  assert.deepEqual(profileSources(ext, user), [{ index: path.join(ext, 'extensions.json'), baseDir: ext }]);
+  assert.deepEqual(profileSources(ext, user, '-6829'), [
     { index: path.join(user, 'profiles', '-6829', 'extensions.json'), baseDir: ext },
     { index: path.join(ext, 'extensions.json'), baseDir: ext, applicationScopedOnly: true },
   ]);
+});
+
+test('pickProfile chooses the list that contains every running extension with the highest share running', () => {
+  const candidates = [
+    { location: undefined, ids: ['a.a', 'b.b', 'c.c', 'd.d'] },
+    { location: 'p1', ids: ['b.b'] },
+    { location: 'p2', ids: ['x.x'] },
+  ];
+  assert.equal(pickProfile(candidates, ['b.b']), 'p1', 'a small profile where all its extensions run');
+  assert.equal(pickProfile(candidates, ['a.a', 'b.b', 'c.c']), undefined, 'only the default list contains them all');
+  assert.equal(pickProfile([{ location: undefined, ids: ['b.b'] }, { location: 'p1', ids: ['b.b'] }], ['b.b']), undefined, 'a tie keeps the default profile');
+  assert.equal(pickProfile(candidates, ['zzz.unknown']), undefined);
 });
 
 test('readInstalledExtensions merges a profile list with application-scoped default extensions', async () => {
@@ -104,6 +114,6 @@ test('readInstalledExtensions merges a profile list with application-scoped defa
     path.join(profile, 'extensions.json'),
     JSON.stringify([{ identifier: { id: 'p.inprofile' }, version: '1.0.0', location: { fsPath: path.join(ext, 'p.inprofile-1.0.0') } }]),
   );
-  const list = await readInstalledExtensions(catalogSourcesFor(ext, path.join(profile, 'globalStorage', 'me.ext')));
+  const list = await readInstalledExtensions(profileSources(ext, path.join(root, 'User'), 'abc'));
   assert.deepEqual(list.map((e) => e.id).sort(), ['p.everywhere', 'p.inprofile']);
 });

@@ -85,6 +85,9 @@ export function activate(context: vscode.ExtensionContext): LoadoutController | 
   });
   reg('_extensionLoadout.setViewOptions', (opts: object) => c.setViewOptions(opts));
   reg('_extensionLoadout.l10n', () => ({ language: vscode.env.language, sample: t('Apply and Restart') }));
+  reg('_extensionLoadout.installedIds', async () => (await c.model.installed()).map((e) => e.id));
+  reg('_extensionLoadout.catalogInfo', () => ({ globalStorage: context.globalStorageUri.fsPath, extensionsDir: c.model.extensionsDir() }));
+  reg('_extensionLoadout.location', () => c.model.location());
   reg('_extensionLoadout.dashboard', async (message?: object) => {
     const d = Dashboard.show(c);
     if (message) await d.handle(message as Parameters<Dashboard['handle']>[0]);

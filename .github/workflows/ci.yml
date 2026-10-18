@@ -32,6 +32,12 @@ jobs:
       - name: E2E
         if: runner.os != 'Linux'
         run: node scripts/run-e2e.mjs
+      - name: E2E multi-root and profiles (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/run-e2e-extra.mjs
+      - name: E2E multi-root and profiles
+        if: runner.os != 'Linux'
+        run: node scripts/run-e2e-extra.mjs
       - name: E2E (installed .vsix, relaunch with open)
         if: runner.os == 'macOS'
         run: node scripts/run-e2e.mjs --open
@@ -44,6 +50,8 @@ jobs:
             .vscode-test/e2e/driver.jsonl
             .vscode-test/e2e/ud/logs/**
             /tmp/el-e2e/driver.jsonl
+            /tmp/el-e2x/driver.jsonl
+            .vscode-test/e2x/driver.jsonl
             /tmp/el-e2e/ud/logs/**
             /tmp/extension-loadout-restart.log
           if-no-files-found: ignore
