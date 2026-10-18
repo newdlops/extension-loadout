@@ -230,6 +230,12 @@
         "title": "Filter and Sort…",
         "category": "Extension Loadout",
         "icon": "$(filter)"
+      },
+      {
+        "command": "extensionLoadout.openDashboard",
+        "title": "Open Loadout Dashboard",
+        "category": "Extension Loadout",
+        "icon": "$(table)"
       }
     ],
     "menus": {
@@ -255,24 +261,29 @@
           "group": "navigation@4"
         },
         {
-          "command": "extensionLoadout.viewOptions",
+          "command": "extensionLoadout.openDashboard",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@5"
         },
         {
-          "command": "extensionLoadout.pick",
+          "command": "extensionLoadout.viewOptions",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@6"
         },
         {
-          "command": "extensionLoadout.openConfig",
+          "command": "extensionLoadout.pick",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@7"
         },
         {
-          "command": "extensionLoadout.refresh",
+          "command": "extensionLoadout.openConfig",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@8"
+        },
+        {
+          "command": "extensionLoadout.refresh",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
+          "group": "navigation@9"
         },
         {
           "command": "extensionLoadout.applyOnQuit",
@@ -434,6 +445,10 @@
         {
           "command": "extensionLoadout.installRecommended",
           "when": "false"
+        },
+        {
+          "command": "extensionLoadout.openDashboard",
+          "when": "workbenchState != empty"
         }
       ]
     },

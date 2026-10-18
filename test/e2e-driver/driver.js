@@ -115,6 +115,10 @@ exports.activate = async (context) => {
       fs.writeFileSync(config, JSON.stringify({ enable: [], disable: [RUST] }));
       await run('_extensionLoadout.applyPreset', 'e2e');
       log({ phase, afterPreset: readConfig() });
+      // 대시보드: 열어서 데이터를 받고, 표에서 끄는 것과 같은 메시지를 보낸다.
+      log({ phase, dashboard: await run('_extensionLoadout.dashboard') });
+      await run('_extensionLoadout.dashboard', { type: 'set', ids: [RUST], value: 'off' });
+      log({ phase, afterDashboard: readConfig() });
       setPhase('done');
       await quit();
     }

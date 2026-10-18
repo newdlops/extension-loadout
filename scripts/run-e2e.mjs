@@ -180,6 +180,8 @@ const checks = [
   ['7단계: 라이브러리를 끄면 그것이 필요한 확장도 함께 꺼짐', same(at('7', 'afterBaseOff')?.disable, [BASE, DEP])],
   ['7단계: 필요한 확장을 켜면 라이브러리도 함께 켜짐', same(at('7', 'afterDepOn'), { enable: [], disable: [] })],
   ['7단계: 프리셋 저장 후 다른 상태에서 적용하면 그대로 돌아옴', same(at('7', 'afterPreset'), { enable: [OFF], disable: [ON] })],
+  ['7단계: 대시보드가 열리고 모든 확장을 보여줌(CSP 포함)', at('7', 'dashboard')?.html === true && at('7', 'dashboard')?.ids.includes(HEAVY) && at('7', 'dashboard')?.rows === 7],
+  ['7단계: 대시보드에서 끈 확장이 loadout 파일에 반영됨', same(at('7', 'afterDashboard'), { enable: [OFF], disable: [ON, RUST] })],
   ['오류 없음', !lines.some((l) => l.error)],
   ['격리 VS Code 종료됨', !alive()],
 ];

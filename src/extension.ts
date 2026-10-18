@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { LoadoutController } from './controller';
+import { Dashboard } from './dashboard';
 import { Override } from './loadout';
 import { sqliteAvailable } from './stateDb';
 import type { Node } from './tree';
@@ -48,6 +49,7 @@ export function activate(context: vscode.ExtensionContext): LoadoutController | 
   reg('extensionLoadout.applyPreset', () => c.applyPreset());
   reg('extensionLoadout.deletePreset', () => c.deletePreset());
   reg('extensionLoadout.viewOptions', () => c.chooseViewOptions());
+  reg('extensionLoadout.openDashboard', () => Dashboard.show(c));
   reg('extensionLoadout.clearSelection', () => c.tree.clearSelection());
   reg('extensionLoadout.enableHere', (n?: unknown, many?: unknown) => set(n, many, 'on'));
   reg('extensionLoadout.disableHere', (n?: unknown, many?: unknown) => set(n, many, 'off'));
@@ -82,6 +84,12 @@ export function activate(context: vscode.ExtensionContext): LoadoutController | 
     return { recommended: [...r.recommended], unwanted: [...r.unwanted], learned: c.learnedList().map((x) => x.id), signature: await c.folderSignature() };
   });
   reg('_extensionLoadout.setViewOptions', (opts: object) => c.setViewOptions(opts));
+  reg('_extensionLoadout.dashboard', async (message?: object) => {
+    const d = Dashboard.show(c);
+    if (message) await d.handle(message as Parameters<Dashboard['handle']>[0]);
+    const data = (await d.data()) as { rows: { id: string; memory: number }[] } | undefined;
+    return { rows: data?.rows.length ?? 0, ids: data?.rows.map((r) => r.id) ?? [], html: d.panel.webview.html.includes('Content-Security-Policy') };
+  });
   reg('_extensionLoadout.tree', async () => {
     const out: object[] = [];
     for (const n of await c.tree.getChildren()) {
