@@ -9,13 +9,40 @@ export interface Activation {
   /** always: 시작할 때마다 켜짐, triggered: 특정 언어·파일·명령에서만, none: 실행 코드가 없음(테마·스니펫 등) */
   kind: 'always' | 'triggered' | 'none';
   languages: string[];
+  /** 화면용으로 줄인 workspaceContains 패턴(앞의 ** / 제거). */
   files: string[];
+  /** workspaceContains 원문 패턴. 파일 존재 확인에 쓴다. */
+  globs: string[];
+  /** activationEvents 원문. */
+  events: string[];
+}
+
+/** 확장이 정의한 언어와 그 언어로 취급되는 파일 이름 규칙. */
+export interface LanguageDef {
+  id: string;
+  extensions: string[];
+  filenames: string[];
+  filenamePatterns: string[];
+}
+
+export function languageDefsOf(manifest: Record<string, unknown>): LanguageDef[] {
+  const contributes = manifest.contributes as { languages?: unknown } | undefined;
+  const list = Array.isArray(contributes?.languages) ? contributes!.languages : [];
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  return list
+    .filter((l): l is Record<string, unknown> => !!l && typeof l === 'object' && typeof (l as { id?: unknown }).id === 'string')
+    .map((l) => ({
+      id: l.id as string,
+      extensions: strings(l.extensions),
+      filenames: strings(l.filenames),
+      filenamePatterns: strings(l.filenamePatterns),
+    }));
 }
 
 /** 목록에 짧게 보여줄 "언제 켜지는지". */
 export function activationText(a: Activation): string {
   if (a.kind === 'none') return 'no code';
-  if (a.kind === 'always') return 'starts always';
+  if (a.kind === 'always') return '⚡ always';
   if (a.languages.length) return a.languages.slice(0, 3).join(', ') + (a.languages.length > 3 ? ', …' : '');
   if (a.files.length) return `when ${a.files[0]} exists`;
   return 'on demand';
@@ -33,17 +60,22 @@ export interface InstalledExtension {
   icon?: string;
   categories: string[];
   activation: Activation;
+  /** extensionDependencies와 extensionPack에 적힌 확장 ID(소문자). */
+  dependsOn: string[];
+  languageDefs: LanguageDef[];
 }
 
 export function describeActivation(manifest: Record<string, unknown>): Activation {
   const events = Array.isArray(manifest.activationEvents) ? (manifest.activationEvents as unknown[]).filter((e): e is string => typeof e === 'string') : [];
   const after = (prefix: string) => [...new Set(events.filter((e) => e.startsWith(prefix)).map((e) => e.slice(prefix.length)))];
   const languages = after('onLanguage:');
-  const files = after('workspaceContains:').map((g) => g.replace(/^\*\*\//, ''));
-  if (!manifest.main && !manifest.browser) return { kind: 'none', languages, files };
+  const globs = after('workspaceContains:');
+  const files = globs.map((g) => g.replace(/^\*\*\//, ''));
+  const base = { languages, files, globs, events: [...new Set(events)] };
+  if (!manifest.main && !manifest.browser) return { kind: 'none', ...base };
   // 1.74부터 기여한 명령·뷰는 암묵적 활성화 이벤트가 되므로, 이벤트가 비어 있으면 필요할 때만 켜진다.
   const always = events.some((e) => e === '*' || e === 'onStartupFinished');
-  return { kind: always ? 'always' : 'triggered', languages, files };
+  return { kind: always ? 'always' : 'triggered', ...base };
 }
 
 interface ExtensionsJsonEntry {
@@ -61,6 +93,8 @@ async function readJson<T>(file: string): Promise<T | undefined> {
     return undefined;
   }
 }
+
+const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map(normalizeId) : []);
 
 const exists = (file: string) => fs.promises.access(file).then(() => true, () => false);
 
@@ -126,6 +160,8 @@ async function readExtension(extensionsDir: string, e: ExtensionsJsonEntry, obso
     icon: iconExists ? iconPath : undefined,
     categories: Array.isArray(manifest.categories) ? (manifest.categories as unknown[]).map(String) : [],
     activation: describeActivation(manifest),
+    dependsOn: [...ids(manifest.extensionDependencies), ...ids(manifest.extensionPack)],
+    languageDefs: languageDefsOf(manifest),
   };
 }
 

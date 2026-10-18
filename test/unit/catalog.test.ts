@@ -6,11 +6,17 @@ import { test } from 'node:test';
 import { activationText, describeActivation, readInstalledExtensions } from '../../src/catalog';
 
 test('describeActivation tells always-on, triggered and code-less extensions apart', () => {
-  assert.deepEqual(describeActivation({ main: './x.js', activationEvents: ['onStartupFinished'] }), { kind: 'always', languages: [], files: [] });
+  assert.deepEqual(describeActivation({ main: './x.js', activationEvents: ['onStartupFinished'] }), {
+    kind: 'always',
+    languages: [],
+    files: [],
+    globs: [],
+    events: ['onStartupFinished'],
+  });
   assert.deepEqual(describeActivation({ main: './x.js', activationEvents: ['*'] }).kind, 'always');
   assert.deepEqual(
     describeActivation({ main: './x.js', activationEvents: ['onLanguage:python', 'onLanguage:python', 'workspaceContains:**/gradlew'] }),
-    { kind: 'triggered', languages: ['python'], files: ['gradlew'] },
+    { kind: 'triggered', languages: ['python'], files: ['gradlew'], globs: ['**/gradlew'], events: ['onLanguage:python', 'workspaceContains:**/gradlew'] },
   );
   // 1.74 이후 명령·뷰만 기여하는 확장은 이벤트가 비어 있어도 필요할 때만 켜진다.
   assert.equal(describeActivation({ main: './x.js' }).kind, 'triggered');
@@ -19,11 +25,12 @@ test('describeActivation tells always-on, triggered and code-less extensions apa
 });
 
 test('activationText is short enough for a tree description', () => {
-  assert.equal(activationText({ kind: 'always', languages: [], files: [] }), 'starts always');
-  assert.equal(activationText({ kind: 'none', languages: [], files: [] }), 'no code');
-  assert.equal(activationText({ kind: 'triggered', languages: ['a', 'b', 'c', 'd'], files: [] }), 'a, b, c, …');
-  assert.equal(activationText({ kind: 'triggered', languages: [], files: ['gradlew'] }), 'when gradlew exists');
-  assert.equal(activationText({ kind: 'triggered', languages: [], files: [] }), 'on demand');
+  const a = (kind: 'always' | 'triggered' | 'none', languages: string[] = [], files: string[] = []) => ({ kind, languages, files, globs: [], events: [] });
+  assert.equal(activationText(a('always')), '⚡ always');
+  assert.equal(activationText(a('none')), 'no code');
+  assert.equal(activationText(a('triggered', ['a', 'b', 'c', 'd'])), 'a, b, c, …');
+  assert.equal(activationText(a('triggered', [], ['gradlew'])), 'when gradlew exists');
+  assert.equal(activationText(a('triggered')), 'on demand');
 });
 
 test('readInstalledExtensions fills icon, publisher, categories and caches until extensions.json changes', async () => {
@@ -40,7 +47,8 @@ test('readInstalledExtensions fills icon, publisher, categories and caches until
   assert.equal(one.icon, path.join(folder, 'media', 'icon.png'));
   assert.equal(one.publisher, 'pub');
   assert.deepEqual(one.categories, ['Linters']);
-  assert.deepEqual(one.activation, { kind: 'triggered', languages: ['python'], files: [] });
+  assert.equal(one.activation.kind, 'triggered');
+  assert.deepEqual(one.activation.languages, ['python']);
 
   // 매니페스트만 바뀌면 캐시를 그대로 쓴다.
   fs.writeFileSync(path.join(folder, 'package.json'), JSON.stringify({ ...manifest, displayName: 'Renamed' }));

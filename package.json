@@ -2,7 +2,7 @@
   "name": "extension-loadout",
   "displayName": "Extension Loadout",
   "description": "Equip each workspace with only the extensions it needs: turn extensions on or off per folder from one panel, saved in .vscode/extension-loadout.json.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "newdlops",
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -49,7 +49,7 @@
       "extensionLoadout": [
         {
           "id": "extensionLoadout.extensions",
-          "name": "This Workspace"
+          "name": "This Folder"
         }
       ],
       "explorer": [
@@ -80,6 +80,18 @@
         "title": "Apply Loadout and Restart VS Code",
         "category": "Extension Loadout",
         "icon": "$(debug-restart)"
+      },
+      {
+        "command": "extensionLoadout.suggest",
+        "title": "Find Extensions This Folder Doesn't Need",
+        "category": "Extension Loadout",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "extensionLoadout.disableSuggested",
+        "title": "Turn Off All Suggested",
+        "category": "Extension Loadout",
+        "icon": "$(circle-slash)"
       },
       {
         "command": "extensionLoadout.pick",
@@ -126,19 +138,24 @@
           "group": "navigation@1"
         },
         {
-          "command": "extensionLoadout.pick",
+          "command": "extensionLoadout.suggest",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@2"
         },
         {
-          "command": "extensionLoadout.openConfig",
+          "command": "extensionLoadout.pick",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@3"
         },
         {
-          "command": "extensionLoadout.refresh",
+          "command": "extensionLoadout.openConfig",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@4"
+        },
+        {
+          "command": "extensionLoadout.refresh",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -149,13 +166,18 @@
         },
         {
           "command": "extensionLoadout.disableHere",
-          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(on|global-on):switchable$/",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(on|global-on|suggest):switchable$/",
           "group": "inline@2"
         },
         {
           "command": "extensionLoadout.followGlobal",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(on|off):/",
           "group": "inline@3"
+        },
+        {
+          "command": "extensionLoadout.disableSuggested",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem == group:suggest",
+          "group": "inline@1"
         }
       ],
       "commandPalette": [
@@ -178,6 +200,14 @@
         {
           "command": "extensionLoadout.pick",
           "when": "workbenchState != empty"
+        },
+        {
+          "command": "extensionLoadout.suggest",
+          "when": "workbenchState != empty"
+        },
+        {
+          "command": "extensionLoadout.disableSuggested",
+          "when": "false"
         }
       ]
     },

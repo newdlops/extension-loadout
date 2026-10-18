@@ -1,18 +1,28 @@
-// 사이드바: "이 폴더에서 켬 / 이 폴더에서 끔 / 전역과 같음" 세 묶음으로 확장을 보여준다.
-// 항목 아이콘은 각 확장의 아이콘을 쓰고, 이 폴더에서의 상태는 배지(✓ ✕ !)·글자색·설명 문구로 구분한다.
+// 사이드바 목록.
+//  - Not needed in this folder: 이 폴더에서 확실히 필요 없는 확장(추천). 버튼 하나로 모두 끌 수 있다.
+//  - ON in this folder / OFF in this folder: 이 폴더 전용 설정. 초록 ✓ / 빨강 ✕ 배지와 글자색으로 구분한다.
+//  - Same as global setting: 전역 설정을 따른다. 켜진 것을 먼저, 꺼진 것은 흐리게.
+// 항목 아이콘은 각 확장의 아이콘이고, 설명에는 언제 켜지는지(⚡ always 등)와 지금 실행 중인지를 짧게 적는다.
 // 설치 목록은 화면이 실제로 그려질 때만 읽는다.
 import * as vscode from 'vscode';
 import { Activation, activationText } from './catalog';
 import { ExtensionRow, LoadoutSnapshot } from './model';
+import type { Suggestion } from './recommend';
 
-type GroupKind = 'on' | 'off' | 'global';
+type GroupKind = 'suggest' | 'on' | 'off' | 'global';
 
 export type Node =
   | { kind: 'group'; group: GroupKind; rows: ExtensionRow[] }
-  | { kind: 'ext'; row: ExtensionRow; pending: boolean }
-  | { kind: 'notice'; label: string; detail?: string; icon: string; command?: vscode.Command };
+  | { kind: 'ext'; row: ExtensionRow; pending: boolean; suggestion?: Suggestion }
+  | { kind: 'notice'; label: string; detail?: string; icon: vscode.ThemeIcon; command?: vscode.Command };
 
 const GROUPS: Record<GroupKind, { label: string; icon: vscode.ThemeIcon; tooltip: string }> = {
+  suggest: {
+    label: 'Not needed in this folder',
+    icon: new vscode.ThemeIcon('lightbulb', new vscode.ThemeColor('charts.yellow')),
+    tooltip:
+      'These only start for certain languages or files, and this folder has none of them. Turning them off here is safe. Use the button on the right to turn them all off.',
+  },
   on: {
     label: 'ON in this folder',
     icon: new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green')),
@@ -35,10 +45,16 @@ const DECORATION_SCHEME = 'extension-loadout';
 /** 이 폴더에서 원하는 상태와 실제 실행 상태가 다른지. 적용 대기 중이면 아직 판단하지 않는다. */
 const mismatchOf = (r: ExtensionRow, pending: boolean) => !pending && !r.locked && r.desiredOn !== r.running;
 
-function stateText(r: ExtensionRow): string {
-  if (r.override === 'on') return r.globallyEnabled ? 'ON here · on elsewhere too' : 'ON only here · off elsewhere';
-  if (r.override === 'off') return r.globallyEnabled ? 'OFF only here · on elsewhere' : 'OFF here · off elsewhere too';
-  return r.globallyEnabled ? 'on everywhere' : 'off everywhere';
+/** 다른 폴더에서는 어떤지. 이 폴더 전용 설정이 있을 때만 의미가 있다. */
+function elsewhereText(r: ExtensionRow): string | undefined {
+  if (!r.override) return undefined;
+  return `elsewhere: ${r.globallyEnabled ? 'on' : 'off'}`;
+}
+
+export function summaryOf(snap: LoadoutSnapshot): string {
+  const on = snap.rows.filter((r) => r.override === 'on').length;
+  const off = snap.rows.filter((r) => r.override === 'off').length;
+  return on || off ? `${on} on · ${off} off here` : 'same as global';
 }
 
 export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDecorationProvider {
@@ -46,11 +62,14 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
   readonly onDidChangeTreeData = this.changed.event;
   private readonly decorationsChanged = new vscode.EventEmitter<undefined>();
   readonly onDidChangeFileDecorations = this.decorationsChanged.event;
+  private readonly loaded = new vscode.EventEmitter<LoadoutSnapshot | undefined>();
+  /** 목록을 새로 읽을 때마다. 제목 옆 요약과 추천 계산에 쓴다. */
+  readonly onDidLoad = this.loaded.event;
   private snap?: LoadoutSnapshot;
   private stale = true;
-  private byId = new Map<string, ExtensionRow>();
-
   private loading?: Promise<LoadoutSnapshot | undefined>;
+  private byId = new Map<string, ExtensionRow>();
+  private suggestions: Suggestion[] = [];
 
   constructor(private readonly load: () => Promise<LoadoutSnapshot | undefined>) {}
 
@@ -60,13 +79,26 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     this.changed.fire();
   }
 
-  private async current(): Promise<LoadoutSnapshot | undefined> {
+  setSuggestions(list: Suggestion[]): void {
+    this.suggestions = list;
+    this.changed.fire();
+  }
+
+  /** 지금 화면 기준으로, 아직 켜져 있어서 끌 의미가 있는 추천. */
+  activeSuggestions(): { row: ExtensionRow; suggestion: Suggestion }[] {
+    return this.suggestions
+      .map((s) => ({ row: this.byId.get(s.id)!, suggestion: s }))
+      .filter((x) => x.row && x.row.desiredOn && x.row.override !== 'on' && !x.row.locked);
+  }
+
+  async current(): Promise<LoadoutSnapshot | undefined> {
     if (this.stale) {
       this.stale = false;
       this.loading = this.load().then((snap) => {
         this.snap = snap;
         this.byId = new Map(snap?.rows.map((r) => [r.id, r]) ?? []);
         this.decorationsChanged.fire(undefined);
+        this.loaded.fire(snap);
         return snap;
       });
     }
@@ -80,19 +112,41 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     if (!node) {
       const out: Node[] = [];
       for (const err of snap.configErrors) {
-        out.push({ kind: 'notice', label: 'Loadout file has a problem', detail: err, icon: 'error', command: { command: 'extensionLoadout.openConfig', title: 'Open' } });
+        out.push({
+          kind: 'notice',
+          label: 'Loadout file has a problem',
+          detail: err,
+          icon: new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground')),
+          command: { command: 'extensionLoadout.openConfig', title: 'Open' },
+        });
       }
       if (snap.pending) {
-        out.push({ kind: 'notice', label: 'Restart to apply changes', icon: 'debug-restart', command: { command: 'extensionLoadout.applyAndRestart', title: 'Apply' } });
+        out.push({
+          kind: 'notice',
+          label: 'Restart VS Code to apply',
+          detail: 'click here',
+          icon: new vscode.ThemeIcon('debug-restart', new vscode.ThemeColor('charts.orange')),
+          command: { command: 'extensionLoadout.applyAndRestart', title: 'Apply' },
+        });
       }
       for (const id of snap.missing) {
-        out.push({ kind: 'notice', label: id, detail: 'In the loadout but not installed', icon: 'warning' });
+        out.push({ kind: 'notice', label: id, detail: 'in the loadout but not installed', icon: new vscode.ThemeIcon('warning') });
       }
-      const by = (g: GroupKind) => snap.rows.filter((r) => (g === 'global' ? !r.override : r.override === g));
-      for (const g of ['on', 'off', 'global'] as GroupKind[]) out.push({ kind: 'group', group: g, rows: by(g) });
+      const suggested = this.activeSuggestions();
+      if (suggested.length) out.push({ kind: 'group', group: 'suggest', rows: suggested.map((s) => s.row) });
+      out.push({ kind: 'group', group: 'on', rows: snap.rows.filter((r) => r.override === 'on') });
+      out.push({ kind: 'group', group: 'off', rows: snap.rows.filter((r) => r.override === 'off') });
+      // 전역을 따르는 것 중 켜진 것을 먼저 보여준다.
+      const global = snap.rows.filter((r) => !r.override);
+      out.push({ kind: 'group', group: 'global', rows: [...global.filter((r) => r.globallyEnabled), ...global.filter((r) => !r.globallyEnabled)] });
       return out;
     }
-    if (node.kind === 'group') return node.rows.map((row) => ({ kind: 'ext', row, pending: snap.pending }));
+    if (node.kind === 'group') {
+      if (node.group === 'suggest') {
+        return this.activeSuggestions().map(({ row, suggestion }) => ({ kind: 'ext', row, pending: snap.pending, suggestion }));
+      }
+      return node.rows.map((row) => ({ kind: 'ext', row, pending: snap.pending }));
+    }
     return [];
   }
 
@@ -107,7 +161,7 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
       );
       item.id = `group:${node.group}`;
       item.iconPath = g.icon;
-      item.description = String(node.rows.length);
+      item.description = node.group === 'suggest' ? `${node.rows.length} · safe to turn off` : String(node.rows.length);
       item.tooltip = g.tooltip;
       item.contextValue = `group:${node.group}`;
       return item;
@@ -115,25 +169,35 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     if (node.kind === 'notice') {
       const item = new vscode.TreeItem(node.label);
       item.description = node.detail;
-      item.tooltip = node.detail ?? node.label;
-      item.iconPath = new vscode.ThemeIcon(node.icon);
+      item.tooltip = node.detail ? `${node.label}: ${node.detail}` : node.label;
+      item.iconPath = node.icon;
       item.command = node.command;
       return item;
     }
     const r = node.row;
-    const mismatch = mismatchOf(r, node.pending);
     const item = new vscode.TreeItem(r.displayName);
+    item.iconPath = r.icon ? vscode.Uri.file(r.icon) : new vscode.ThemeIcon('extensions');
+    item.command = { command: 'extension.open', title: 'Show Extension', arguments: [r.id] };
+    if (node.suggestion) {
+      item.id = `suggest:${r.id}`;
+      item.description = node.suggestion.reason.replace(/ in this folder$/, '');
+      item.contextValue = `ext:suggest:${r.locked ? 'locked' : 'switchable'}`;
+      item.tooltip = this.tooltip(r, false, node.suggestion);
+      return item;
+    }
+    const mismatch = mismatchOf(r, node.pending);
     item.id = `ext:${r.id}`;
     // 배지와 글자색은 provideFileDecoration이 이 URI를 보고 붙인다.
     item.resourceUri = vscode.Uri.from({ scheme: DECORATION_SCHEME, path: `/${r.id}` });
-    item.iconPath = r.icon ? vscode.Uri.file(r.icon) : new vscode.ThemeIcon('extensions');
     const state = r.override ?? (r.globallyEnabled ? 'global-on' : 'global-off');
     item.contextValue = `ext:${state}:${r.locked ? 'locked' : 'switchable'}`;
-    const parts = [stateText(r), activationText(r.activation)];
-    if (mismatch) parts.unshift(r.desiredOn ? 'not running' : 'still running');
-    else if (r.active) parts.push('running now');
+    const parts: string[] = [];
+    if (mismatch) parts.push(r.desiredOn ? 'not running yet' : 'still running');
+    else if (r.active) parts.push('● running');
+    parts.push(activationText(r.activation));
+    const elsewhere = elsewhereText(r);
+    if (elsewhere) parts.push(elsewhere);
     item.description = parts.join(' · ');
-    item.command = { command: 'extension.open', title: 'Show Extension', arguments: [r.id] };
     item.tooltip = this.tooltip(r, mismatch);
     return item;
   }
@@ -151,11 +215,15 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     return undefined;
   }
 
-  private tooltip(r: ExtensionRow, mismatch: boolean): vscode.MarkdownString {
+  private tooltip(r: ExtensionRow, mismatch: boolean, suggestion?: Suggestion): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
+    md.supportThemeIcons = true;
     md.appendMarkdown(`**${r.displayName}**  \n\`${r.id}\` · v${r.version} · ${r.publisher}\n\n`);
     if (r.description) md.appendMarkdown(`${r.description}\n\n`);
-    md.appendMarkdown(`**This folder:** ${r.override ? (r.override === 'on' ? 'ON (folder setting)' : 'OFF (folder setting)') : 'same as global'}  \n`);
+    if (suggestion) {
+      md.appendMarkdown(`$(lightbulb) **Safe to turn off here.** ${suggestion.reason}, and it only starts for those.\n\n`);
+    }
+    md.appendMarkdown(`**This folder:** ${r.override === 'on' ? 'ON (folder setting)' : r.override === 'off' ? 'OFF (folder setting)' : 'same as global'}  \n`);
     md.appendMarkdown(`**Global setting:** ${r.globallyEnabled ? 'on' : 'off'}  \n`);
     md.appendMarkdown(`**Starts:** ${this.activationDetail(r.activation)}  \n`);
     md.appendMarkdown(`**Now:** ${r.active ? 'running' : r.running ? 'loaded, not started yet' : 'not loaded'}`);
@@ -168,13 +236,12 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
           : '\n\n$(warning) The loadout turns this off, but it is still running. Another extension may depend on it.',
       );
     }
-    md.supportThemeIcons = true;
     return md;
   }
 
   private activationDetail(a: Activation): string {
     if (a.kind === 'none') return 'never runs code (theme, snippets, grammar or similar)';
-    if (a.kind === 'always') return 'every time VS Code opens a window';
+    if (a.kind === 'always') return 'every time VS Code opens a window, in every folder';
     const why: string[] = [];
     if (a.languages.length) why.push(`when you open ${a.languages.join(', ')} files`);
     if (a.files.length) why.push(`when the folder contains ${a.files.slice(0, 3).join(', ')}`);

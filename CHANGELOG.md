@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- **Not needed in this folder**: a new group at the top lists extensions that are certainly unneeded here, with the reason (for example "No rust files (*.rs), Cargo.toml"). Turn them off one by one or all at once with the button on the group. Only extensions that start for specific languages or files are considered, and only when this folder has none of them. Extensions that start always, target common formats (JSON, Markdown, YAML…), have triggers that cannot be checked, or that another enabled extension depends on are never suggested.
+- The check runs in the background once, when the panel is first shown, and only searches for the candidates' file patterns. Run **Find Extensions This Folder Doesn't Need** (lightbulb button) to check again.
+- Easier to read: shorter row text ("⚡ always", "● running", "elsewhere: off"), extensions that are on listed before those that are off, the folder summary next to the panel title, and a status bar item showing how many extensions this folder turns on and off.
+
 ## 0.2.0
 
 - Clearer folder state: groups are now "ON in this folder", "OFF in this folder" and "Same as global setting", and each extension carries a green ✓ or red ✕ badge, a matching label color, and text such as "ON only here · off elsewhere".

@@ -22,6 +22,7 @@ exports.activate = async () => {
     const config = path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, '.vscode', 'extension-loadout.json');
     log({ phase, on: running(ON), off: running(OFF), config: JSON.parse(fs.readFileSync(config, 'utf8')) });
     if (phase === '1') {
+      log({ phase, suggestions: await vscode.commands.executeCommand('_extensionLoadout.suggestions') });
       setPhase('2');
       await vscode.commands.executeCommand('extensionLoadout.applyAndRestart');
     } else if (phase === '2') {

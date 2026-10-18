@@ -13,6 +13,7 @@ Extension Loadout keeps a per-workspace list of extensions to turn **on** or **o
   - **OFF in this folder** (red ✕): never runs in this folder.
   - **Same as global setting**: does whatever the Extensions view says.
 - Each row shows the extension's icon and when it starts: *starts always* (it costs memory in every window), the languages it is for, *when gradlew exists*, or *no code* (themes and the like). *running now* marks extensions that are active at the moment. Hover for details, click to open the extension's page.
+- **Not needed in this folder** (💡) appears on top when some extensions are certainly unneeded here: they only start for certain languages or files, and this folder has none of them, for example rust-analyzer in a repository without Rust files or `Cargo.toml`. Each row says why. Turn them off one by one, or all at once with the button on the group. Extensions that start in every window, work on common formats such as JSON or Markdown, or that another enabled extension needs are never suggested, so the list can be short or empty. Those "⚡ always" extensions are the ones that cost memory in every window, so they are worth reviewing yourself.
 - Use the inline buttons to move an extension between groups, or run **Extension Loadout: Choose Extensions for This Workspace...** and tick the ones you want.
 - Changes are saved to `.vscode/extension-loadout.json`:
 
@@ -33,7 +34,7 @@ Disable the extension globally in the Extensions view, then put it in the `enabl
 
 ## Staying light
 
-Extension Loadout starts at launch only in folders that have `.vscode/extension-loadout.json`. Everywhere else it stays off until you open its panel or run one of its commands. The list of installed extensions is read in the background only while the panel is visible, and is reused until you install, update or remove an extension.
+Extension Loadout starts at launch only in folders that have `.vscode/extension-loadout.json`. The "not needed" check runs once in the background when the panel is first shown, and searches only for the file patterns of the candidate extensions. Everywhere else it stays off until you open its panel or run one of its commands. The list of installed extensions is read in the background only while the panel is visible, and is reused until you install, update or remove an extension.
 
 ## Why a restart?
 

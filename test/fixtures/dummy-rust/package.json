@@ -1,0 +1,1 @@
+{"name":"dummy-rust","displayName":"Loadout Test Dummy (Rust only)","publisher":"loadouttest","version":"0.0.1","license":"MIT","engines":{"vscode":"^1.85.0"},"activationEvents":["onLanguage:rust","workspaceContains:Cargo.toml"],"main":"./index.js","repository":{"type":"git","url":"https://example.invalid/dummy"}}
