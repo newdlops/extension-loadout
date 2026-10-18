@@ -1,8 +1,10 @@
 # Changelog
 
-## 0.0.1
+## 0.1.0
 
-- Activity bar view that groups installed extensions into "Turned on here", "Turned off here" and "Following global setting".
+First Marketplace release.
+
+- Loadout view in its own activity bar panel and in the Explorer sidebar, grouping installed extensions into "Turned on here", "Turned off here" and "Following global setting".
 - Per-workspace loadout saved in `.vscode/extension-loadout.json`, with JSON schema validation.
 - Quick pick to choose this workspace's extensions in one go.
 - "Apply Loadout and Restart VS Code": writes the workspace extension state after VS Code exits, then relaunches it.

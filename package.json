@@ -2,8 +2,13 @@
   "name": "extension-loadout",
   "displayName": "Extension Loadout",
   "description": "Equip each workspace with only the extensions it needs: turn extensions on or off per folder from one panel, saved in .vscode/extension-loadout.json.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "newdlops",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1f2a5c",
+    "theme": "dark"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -46,11 +51,24 @@
           "id": "extensionLoadout.extensions",
           "name": "This Workspace"
         }
+      ],
+      "explorer": [
+        {
+          "id": "extensionLoadout.explorer",
+          "name": "Extension Loadout",
+          "icon": "media/loadout.svg",
+          "contextualTitle": "Extension Loadout"
+        }
       ]
     },
     "viewsWelcome": [
       {
         "view": "extensionLoadout.extensions",
+        "contents": "Open a folder to choose which extensions run in it.",
+        "when": "workbenchState == empty"
+      },
+      {
+        "view": "extensionLoadout.explorer",
         "contents": "Open a folder to choose which extensions run in it.",
         "when": "workbenchState == empty"
       }
@@ -103,39 +121,39 @@
       "view/title": [
         {
           "command": "extensionLoadout.applyAndRestart",
-          "when": "view == extensionLoadout.extensions && extensionLoadout.pending",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && extensionLoadout.pending",
           "group": "navigation@1"
         },
         {
           "command": "extensionLoadout.pick",
-          "when": "view == extensionLoadout.extensions",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@2"
         },
         {
           "command": "extensionLoadout.openConfig",
-          "when": "view == extensionLoadout.extensions",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@3"
         },
         {
           "command": "extensionLoadout.refresh",
-          "when": "view == extensionLoadout.extensions",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@4"
         }
       ],
       "view/item/context": [
         {
           "command": "extensionLoadout.enableHere",
-          "when": "view == extensionLoadout.extensions && viewItem =~ /^ext:(off|global-off):switchable$/",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(off|global-off):switchable$/",
           "group": "inline@1"
         },
         {
           "command": "extensionLoadout.disableHere",
-          "when": "view == extensionLoadout.extensions && viewItem =~ /^ext:(on|global-on):switchable$/",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(on|global-on):switchable$/",
           "group": "inline@2"
         },
         {
           "command": "extensionLoadout.followGlobal",
-          "when": "view == extensionLoadout.extensions && viewItem =~ /^ext:(on|off):/",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(on|off):/",
           "group": "inline@3"
         }
       ],

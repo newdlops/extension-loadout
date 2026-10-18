@@ -8,7 +8,7 @@ Extension Loadout keeps a per-workspace list of extensions to turn **on** or **o
 
 ## How it works
 
-- Open the **Extension Loadout** view in the activity bar. Every installed extension is in one of three groups:
+- Open the **Extension Loadout** panel, either from its activity bar icon or in the Explorer sidebar under your files. Every installed extension is in one of three groups:
   - **Turned on here**: runs in this workspace, even if it is off globally.
   - **Turned off here**: never runs in this workspace.
   - **Following global setting**: does whatever the Extensions view says.

@@ -16,7 +16,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('Extension Loadout', { log: true });
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = 'extensionLoadout.applyAndRestart';
-  context.subscriptions.push(output, status, vscode.window.createTreeView('extensionLoadout.extensions', { treeDataProvider: tree, showCollapseAll: true }));
+  // 전용 액티비티 바 패널과 탐색기 사이드바 양쪽에 같은 목록을 띄운다.
+  context.subscriptions.push(
+    output,
+    status,
+    vscode.window.createTreeView('extensionLoadout.extensions', { treeDataProvider: tree, showCollapseAll: true }),
+    vscode.window.createTreeView('extensionLoadout.explorer', { treeDataProvider: tree, showCollapseAll: true }),
+  );
 
   let snap: LoadoutSnapshot | undefined;
   const refresh = (): LoadoutSnapshot | undefined => {

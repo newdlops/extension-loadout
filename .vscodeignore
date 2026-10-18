@@ -16,3 +16,4 @@ package-lock.json
 *.vsix
 .codeidx/**
 .zoek*
+media/icon.svg
