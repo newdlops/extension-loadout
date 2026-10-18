@@ -234,18 +234,21 @@ export function profileSources(extensionsDir: string, userDir: string, profileLo
 }
 
 /**
- * 이 창의 프로필을 켜져 있는 확장으로 추론한다. 켜진 확장을 모두 담고 있는 목록 가운데 켜진 비율이 가장 높은 것.
- * (명령줄 --profile로 연 창은 프로필 연결이 어디에도 기록되지 않는다.) 고를 수 없으면 기본 프로필(undefined).
+ * 이 창의 프로필을 켜져 있는 확장으로 추론한다. (명령줄 --profile로 연 창은 프로필 연결이 어디에도 기록되지 않는다.)
+ * 기본 프로필 목록이 켜진 확장을 모두 담고 있으면 기본 프로필이다. 기본 프로필에서 몇 개를 꺼 둔 것이
+ * 우연히 작은 프로필과 같아 보이는 경우를 다른 프로필로 오인하지 않기 위해서다.
+ * 그렇지 않을 때만, 켜진 확장을 모두 담고 있는 프로필 가운데 켜진 비율이 가장 높은 것을 고른다.
  */
 export function pickProfile(candidates: { location?: string; ids: string[] }[], running: string[]): string | undefined {
-  const on = new Set(running);
+  const on = [...new Set(running)];
+  const covers = (ids: string[]) => on.every((id) => ids.includes(id));
+  const def = candidates.find((c) => !c.location);
+  if (!def || covers(def.ids)) return undefined;
   let best: { location?: string; score: number } | undefined;
   for (const c of candidates) {
-    const ids = new Set(c.ids);
-    if (!ids.size || [...on].some((id) => !ids.has(id))) continue;
-    const score = [...ids].filter((id) => on.has(id)).length / ids.size;
-    // 같은 점수면 기본 프로필을 우선한다.
-    if (!best || score > best.score || (score === best.score && !c.location)) best = { location: c.location, score };
+    if (!c.location || !c.ids.length || !covers(c.ids)) continue;
+    const score = c.ids.filter((id) => on.includes(id)).length / c.ids.length;
+    if (!best || score > best.score) best = { location: c.location, score };
   }
   return best?.location;
 }

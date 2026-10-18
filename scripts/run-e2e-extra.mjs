@@ -34,8 +34,9 @@ const cli = (args) => execFileSync(CLI, args, { stdio: 'ignore', shell: isWin })
 for (const name of ['dummy-on', 'dummy-rust']) {
   const vsix = path.join(DIR, `${name}.vsix`);
   execFileSync(process.execPath, [VSCE, 'package', '--no-dependencies', '--allow-missing-repository', '--skip-license', '-o', vsix], { cwd: path.join(ROOT, 'test', 'fixtures', name), stdio: 'ignore' });
-  cli(['--user-data-dir', ud, '--extensions-dir', exts, '--install-extension', vsix]);
 }
+// 기본 프로필에는 dummy-on만. dummy-rust는 아래에서 프로필에만 설치한다(실제 프로필 전용 확장처럼).
+cli(['--user-data-dir', ud, '--extensions-dir', exts, '--install-extension', path.join(DIR, 'dummy-on.vsix')]);
 
 // 멀티 루트: api는 dummy-on을 끄고, web은 켠다(충돌 → 켬). 작업 영역 파일은 mr.code-workspace.
 for (const [name, rules] of [['api', { disable: [ON] }], ['web', { enable: [ON] }]]) {
@@ -71,6 +72,7 @@ const checks = [
   ['멀티 루트: 고치는 파일은 .code-workspace 옆 mr.loadout.json', get('multiroot', 'location')?.editable?.toLowerCase() === editable.toLowerCase()],
   ['멀티 루트: 패널에서 끈 값이 mr.loadout.json에 저장됨', same(get('multiroot', 'afterEdit')?.disable, [RUST])],
   ['멀티 루트: 합친 결과에 반영', same(get('multiroot', 'stateAfterEdit'), { [ON]: 'on', [RUST]: 'off' })],
+  ['프로필: 기본 프로필 창은 기본 프로필의 확장만', same(get('multiroot', 'installed'), [ON])],
   ['프로필: 그 프로필에 설치된 확장만 목록에', same(get('profile', 'installed'), [RUST])],
   ['오류 없음', !lines.some((l) => l.error)],
 ];

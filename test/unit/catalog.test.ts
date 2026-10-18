@@ -79,16 +79,24 @@ test('profileSources: default list, or the profile list plus application-scoped 
   ]);
 });
 
-test('pickProfile chooses the list that contains every running extension with the highest share running', () => {
-  const candidates = [
-    { location: undefined, ids: ['a.a', 'b.b', 'c.c', 'd.d'] },
+test('pickProfile keeps the default profile whenever its list covers what runs, else the best covering profile', () => {
+  // 기본 프로필에서 몇 개를 꺼 두어 켜진 것이 작은 프로필과 같아져도 기본 프로필이다.
+  const withB = [
+    { location: undefined, ids: ['a.a', 'b.b', 'c.c'] },
     { location: 'p1', ids: ['b.b'] },
-    { location: 'p2', ids: ['x.x'] },
   ];
-  assert.equal(pickProfile(candidates, ['b.b']), 'p1', 'a small profile where all its extensions run');
-  assert.equal(pickProfile(candidates, ['a.a', 'b.b', 'c.c']), undefined, 'only the default list contains them all');
-  assert.equal(pickProfile([{ location: undefined, ids: ['b.b'] }, { location: 'p1', ids: ['b.b'] }], ['b.b']), undefined, 'a tie keeps the default profile');
-  assert.equal(pickProfile(candidates, ['zzz.unknown']), undefined);
+  assert.equal(pickProfile(withB, ['b.b']), undefined);
+  // 프로필 전용 확장이 켜져 있으면 그 프로필이다.
+  const candidates = [
+    { location: undefined, ids: ['a.a', 'c.c'] },
+    { location: 'p1', ids: ['b.b'] },
+    { location: 'p2', ids: ['b.b', 'x.x', 'y.y'] },
+    { location: 'p3', ids: ['z.z'] },
+  ];
+  assert.equal(pickProfile(candidates, ['b.b']), 'p1', 'the covering profile with the highest share running');
+  assert.equal(pickProfile(candidates, ['b.b', 'x.x']), 'p2');
+  assert.equal(pickProfile(candidates, []), undefined, 'nothing running: default');
+  assert.equal(pickProfile(candidates, ['q.q']), undefined, 'nobody covers it: default');
 });
 
 test('readInstalledExtensions merges a profile list with application-scoped default extensions', async () => {

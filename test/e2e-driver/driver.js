@@ -44,7 +44,7 @@ async function extraMode(mode) {
   await vscode.extensions.getExtension('newdlops.extension-loadout').activate();
   if (mode === 'multiroot') {
     const st = await run('_extensionLoadout.state');
-    log({ mode, overrides: st.overrides, conflicts: st.conflicts, location: await run('_extensionLoadout.location') });
+    log({ mode, overrides: st.overrides, conflicts: st.conflicts, location: await run('_extensionLoadout.location'), installed: await run('_extensionLoadout.installedIds') });
     await run('extensionLoadout.disableHere', RUST);
     const loc = await run('_extensionLoadout.location');
     log({ mode, afterEdit: JSON.parse(fs.readFileSync(loc.editable, 'utf8')), stateAfterEdit: (await run('_extensionLoadout.state')).overrides });
