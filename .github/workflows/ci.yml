@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: npm run test:unit
+      - run: npm run compile
+      # 격리된 VS Code를 띄워 적용 → 재시작 → 종료할 때 적용 → 다른 폴더 → 되돌리기를 끝까지 돌린다.
+      - name: E2E (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/run-e2e.mjs
+      - name: E2E
+        if: runner.os != 'Linux'
+        run: node scripts/run-e2e.mjs
+      - name: E2E (installed .vsix, relaunch with open)
+        if: runner.os == 'macOS'
+        run: node scripts/run-e2e.mjs --open
+      - name: Keep E2E logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-${{ matrix.os }}
+          path: |
+            .vscode-test/e2e/driver.jsonl
+            .vscode-test/e2e/ud/logs/**
+            /tmp/el-e2e/driver.jsonl
+            /tmp/el-e2e/ud/logs/**
+            /tmp/extension-loadout-restart.log
+          if-no-files-found: ignore

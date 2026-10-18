@@ -24,7 +24,8 @@ export interface SuggestInput {
   id: string;
   displayName: string;
   activation: Activation;
-  dependsOn: string[];
+  /** 이 확장이 동작하려면 켜져 있어야 하는 확장. */
+  dependencies: string[];
   /** 지금 이 폴더에서 켜져 있어야 하는 상태인지. 이미 꺼진 것은 추천할 필요가 없다. */
   desiredOn: boolean;
   locked: boolean;
@@ -74,7 +75,7 @@ export function languageGlobs(defs: LanguageDef[]): Map<string, { globs: string[
 /** 추천 후보와, 각 후보가 "필요 없다"고 판단하려면 모두 비어 있어야 하는 파일 조건을 고른다. */
 export function planSuggestions(rows: SuggestInput[], langs: Map<string, { globs: string[]; sample: string[] }>): Candidate[] {
   // 켜져 있는 다른 확장이 의존하는 확장은 끄면 그 확장도 망가지므로 제외한다.
-  const neededByOthers = new Set(rows.filter((r) => r.desiredOn).flatMap((r) => r.dependsOn));
+  const neededByOthers = new Set(rows.filter((r) => r.desiredOn).flatMap((r) => r.dependencies));
   const out: Candidate[] = [];
   for (const r of rows) {
     const a = r.activation;

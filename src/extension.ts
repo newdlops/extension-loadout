@@ -1,289 +1,88 @@
-import * as fs from 'fs';
 import * as vscode from 'vscode';
-import { Override, normalizeId, overridesFromSelection, storedValuesFor } from './loadout';
-import { LoadoutModel, LoadoutSnapshot, LoadoutStatus } from './model';
-import { logPath, restartWith } from './restart';
+import { LoadoutController } from './controller';
+import { Override } from './loadout';
 import { sqliteAvailable } from './stateDb';
-import { activationText } from './catalog';
-import type { Suggestion } from './recommend';
-import { computeSuggestions } from './suggestions';
-import { LoadoutTree, Node, summaryOf } from './tree';
+import type { Node } from './tree';
 
-export function activate(context: vscode.ExtensionContext): void {
+const t = vscode.l10n.t;
+
+/** 명령 인자를 확장 ID 목록으로. 트리에서 여러 줄을 골랐으면 두 번째 인자로 모두 들어온다. */
+function idsOf(target: unknown, many?: unknown): string[] {
+  const list = Array.isArray(many) && many.length ? many : Array.isArray(target) ? target : [target];
+  return list.flatMap((x) => (typeof x === 'string' ? [x] : (x as Node | undefined)?.kind === 'ext' ? [(x as Extract<Node, { kind: 'ext' }>).row.id] : []));
+}
+
+export function activate(context: vscode.ExtensionContext): LoadoutController | undefined {
   if (!sqliteAvailable()) {
-    vscode.window.showErrorMessage('Extension Loadout needs VS Code 1.101 or newer.');
-    return;
+    void vscode.window.showErrorMessage(t('Extension Loadout needs VS Code 1.101 or newer.'));
+    return undefined;
   }
   const started = Date.now();
-  const model = new LoadoutModel(context);
-  const output = vscode.window.createOutputChannel('Extension Loadout', { log: true });
-  const report = (what: string, e: unknown) => {
-    output.error(what, e as Error);
-    vscode.window.showErrorMessage(`Extension Loadout: ${what}: ${(e as Error).message}`);
-  };
-  // 설치 목록 전체는 목록 화면이 그려질 때만 읽는다.
-  const tree = new LoadoutTree(async () => {
-    if (!model.workspaceDbPath) return undefined;
-    try {
-      return await model.snapshot();
-    } catch (e) {
-      report('could not read the extension state', e);
-      return undefined;
-    }
-  });
-  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  // 전용 액티비티 바 패널과 탐색기 사이드바 양쪽에 같은 목록을 띄운다.
-  const views = [
-    vscode.window.createTreeView('extensionLoadout.extensions', { treeDataProvider: tree, showCollapseAll: true, canSelectMany: true, manageCheckboxStateManually: true }),
-    vscode.window.createTreeView('extensionLoadout.explorer', { treeDataProvider: tree, showCollapseAll: true, canSelectMany: true, manageCheckboxStateManually: true }),
-  ];
-  // 체크박스는 "선택"이다. 선택한 것을 버튼 하나로 한꺼번에 끈다.
-  for (const v of views) context.subscriptions.push(v.onDidChangeCheckboxState((e) => tree.toggle(e.items)));
-  context.subscriptions.push(
-    tree.onDidChangeSelection((count) => {
-      void vscode.commands.executeCommand('setContext', 'extensionLoadout.hasSelection', count > 0);
-      for (const v of views) v.message = count ? `${count} selected. Click "Turn Off Selected" (⊘) at the top to turn them off in this folder.` : undefined;
-    }),
-  );
+  const c = new LoadoutController(context);
+  context.subscriptions.push(c);
 
-  // 추천은 목록을 처음 그릴 때 한 번, 그리고 확장이 바뀌거나 사용자가 다시 찾을 때만 계산한다.
-  let suggestions: Promise<Suggestion[]> | undefined;
-  const findSuggestions = (snap: LoadoutSnapshot) => {
-    suggestions = computeSuggestions(snap, output).catch((e) => {
-      output.error('Could not check which extensions this folder needs', e as Error);
-      return [];
-    });
-    void suggestions.then((list) => tree.setSuggestions(list));
-    return suggestions;
-  };
-
-  context.subscriptions.push(
-    output,
-    status,
-    ...views,
-    vscode.window.registerFileDecorationProvider(tree),
-    vscode.extensions.onDidChange(() => {
-      suggestions = undefined;
-      tree.invalidate();
-    }),
-    tree.onDidLoad((snap) => {
-      for (const v of views) v.description = snap ? summaryOf(snap) : undefined;
-      if (snap && !suggestions) void findSuggestions(snap);
-    }),
-  );
-
-  /** loadout 파일과 워크스페이스 저장소만 읽어 상태 표시줄을 갱신하고, 목록은 다음에 그릴 때 다시 읽게 한다. */
-  const refresh = (): LoadoutStatus | undefined => {
-    let st: LoadoutStatus | undefined;
-    try {
-      st = model.workspaceDbPath ? model.status() : undefined;
-    } catch (e) {
-      report('could not read the loadout', e);
-    }
-    tree.invalidate();
-    void vscode.commands.executeCommand('setContext', 'extensionLoadout.pending', !!st?.pending);
-    if (st?.pending) {
-      status.text = '$(debug-restart) Loadout: restart to apply';
-      status.tooltip = "This folder's extension loadout changed. Click to apply it and restart VS Code.";
-      status.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-      status.command = 'extensionLoadout.applyAndRestart';
-      status.show();
-    } else if (st?.configExists && st.overrides.size) {
-      // 이 폴더에 전용 설정이 있으면 몇 개를 켜고 껐는지 늘 보이게 한다. 누르면 목록을 연다.
-      const on = [...st.overrides.values()].filter((v) => v === 'on').length;
-      status.text = `$(checklist) ${on} on · ${st.overrides.size - on} off`;
-      status.tooltip = 'Extension Loadout: extensions turned on / off only in this folder. Click to show them.';
-      status.backgroundColor = undefined;
-      status.command = 'extensionLoadout.extensions.focus';
-      status.show();
-    } else {
-      status.hide();
-    }
-    return st;
-  };
-
-  const requireWorkspace = (): LoadoutStatus | undefined => {
-    const st = refresh();
-    if (!st || !model.configPath) {
-      vscode.window.showWarningMessage('Open a local folder to set up its extension loadout.');
-      return undefined;
-    }
-    return st;
-  };
-
-  const applyAndRestart = async () => {
-    const s = requireWorkspace();
-    if (!s) return;
-    if (s.configErrors.length) {
-      vscode.window.showErrorMessage(`Fix the loadout file first: ${s.configErrors[0]}`);
-      return;
-    }
-    if (!s.configExists) await model.save(new Map(s.overrides));
-    const uuid = new Map((await model.snapshot(s)).rows.map((r) => [r.id, r.uuid]));
-    const items = storedValuesFor(s.overrides, (id) => uuid.get(id));
-    try {
-      output.info(`Applying loadout to ${model.workspaceDbPath}: ${JSON.stringify(items)}`);
-      await restartWith(context, model.workspaceDbPath!, items);
-    } catch (e) {
-      output.error('Restart failed', e as Error);
-      vscode.window.showErrorMessage(`Could not restart VS Code: ${(e as Error).message} (log: ${logPath()})`);
-    }
-  };
-
-  /** 여러 확장의 이 폴더 설정을 한 번에 바꾸고 한 번만 저장한다. 바뀐 개수를 돌려준다. */
-  const applyOverrides = async (ids: string[], value: Override | undefined): Promise<number> => {
-    const s = requireWorkspace();
-    if (!s) return 0;
-    const next = new Map(s.overrides);
-    const globallyDisabled = model.readGloballyDisabled();
-    let changed = 0;
-    for (const id of new Set(ids.map(normalizeId))) {
-      if (id === model.selfId) continue;
-      const before = next.get(id);
-      // 전역 설정과 같은 상태로 "강제"하는 것은 의미가 없으므로 전역 따름으로 정리한다.
-      if (value === undefined || (value === 'on') === !globallyDisabled.has(id)) next.delete(id);
-      else next.set(id, value);
-      if (next.get(id) !== before) changed++;
-    }
-    if (changed) await model.save(next);
-    refresh();
-    return changed;
-  };
-
-  /** 여러 개를 바꾼 뒤에는 재시작 안내를 한 번 띄운다. */
-  const offerRestart = async (message: string) => {
-    if (!model.status().pending) return;
-    const go = await vscode.window.showInformationMessage(`${message} Restart VS Code to apply?`, 'Apply and Restart', 'Later');
-    if (go === 'Apply and Restart') await applyAndRestart();
-  };
-
-  const plural = (n: number) => `${n} extension${n === 1 ? '' : 's'}`;
-
-  /** 명령 인자를 확장 ID 목록으로. 트리에서 여러 줄을 골랐으면 두 번째 인자로 모두 들어온다. */
-  const idsOf = (target: unknown, many?: unknown): string[] => {
-    const list = Array.isArray(many) && many.length ? many : Array.isArray(target) ? target : [target];
-    return list.flatMap((t) => (typeof t === 'string' ? [t] : (t as Node | undefined)?.kind === 'ext' ? [(t as Extract<Node, { kind: 'ext' }>).row.id] : []));
-  };
-
-  const setOverride = async (target: unknown, many: unknown, value: Override | undefined) => {
+  const set = async (target: unknown, many: unknown, value: Override | undefined) => {
     const ids = idsOf(target, many);
-    const changed = await applyOverrides(ids, value);
-    if (ids.length > 1 && changed) void offerRestart(`Updated ${plural(changed)} for this folder.`);
+    const n = await c.set(ids, value);
+    if (ids.length > 1 && n) c.offerApply(n === 1 ? t('Updated 1 extension for this folder.') : t('Updated {0} extensions for this folder.', n));
   };
 
-  const pick = async () => {
-    const st = requireWorkspace();
+  const reg = (id: string, fn: (...args: any[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(id, fn));
+  reg('extensionLoadout.applyAndRestart', () => c.applyNow());
+  reg('extensionLoadout.applyOnQuit', () => c.applyOnQuit());
+  reg('extensionLoadout.cancelApplyOnQuit', () => c.cancelApplyOnQuit());
+  reg('extensionLoadout.applyMenu', () => c.applyMenu());
+  reg('extensionLoadout.applyToOtherFolders', () => c.applyToOtherFolders());
+  reg('extensionLoadout.undo', () => c.undo());
+  reg('extensionLoadout.resetToGlobal', () => c.resetToGlobal());
+  reg('extensionLoadout.pick', () => c.pick());
+  reg('extensionLoadout.suggest', () => c.suggest());
+  reg('extensionLoadout.disableSuggested', () => c.turnOffSuggested());
+  reg('extensionLoadout.disableSelected', () => c.turnOffSelected());
+  reg('extensionLoadout.clearSelection', () => c.tree.clearSelection());
+  reg('extensionLoadout.enableHere', (n?: unknown, many?: unknown) => set(n, many, 'on'));
+  reg('extensionLoadout.disableHere', (n?: unknown, many?: unknown) => set(n, many, 'off'));
+  reg('extensionLoadout.followGlobal', (n?: unknown, many?: unknown) => set(n, many, undefined));
+  reg('extensionLoadout.refresh', () => c.refresh());
+  reg('extensionLoadout.openConfig', async () => {
+    const st = await c.requireWorkspace();
     if (!st) return;
-    const s = await model.snapshot(st);
-    type Item = vscode.QuickPickItem & { id: string };
-    const items: Item[] = s.rows
-      .filter((r) => !r.locked)
-      .map((r) => ({
-        id: r.id,
-        label: r.displayName,
-        description: r.id,
-        detail:
-          (r.override === 'on' ? 'ON in this folder' : r.override === 'off' ? 'OFF in this folder' : 'Same as global') +
-          ` · ${r.globallyEnabled ? 'on' : 'off'} globally · ${activationText(r.activation)}`,
-        picked: r.desiredOn,
-      }));
-    const chosen = await vscode.window.showQuickPick(items, {
-      canPickMany: true,
-      matchOnDescription: true,
-      title: 'Extensions to run in this workspace',
-      placeHolder: 'Checked extensions run here. Unchecked ones are turned off here.',
-    });
-    if (!chosen) return;
-    const next = overridesFromSelection(
-      s.rows.filter((r) => !r.locked),
-      new Set(chosen.map((c) => c.id)),
-      s.overrides,
-    );
-    await model.save(next);
-    const after = refresh();
-    if (after?.pending) {
-      const go = await vscode.window.showInformationMessage('Loadout saved. Restart VS Code to apply it?', 'Apply and Restart', 'Later');
-      if (go === 'Apply and Restart') await applyAndRestart();
+    if (c.model.readConfigText() === undefined) await c.model.save([], st);
+    await vscode.window.showTextDocument(vscode.Uri.file(c.model.configPath!));
+    await c.refresh();
+  });
+
+  // 테스트용 명령(밑줄로 시작해 명령 팔레트에 나오지 않는다).
+  reg('_extensionLoadout.suggestions', async () => (await c.currentSuggestions()).map((x) => x.id));
+  reg('_extensionLoadout.select', (ids: string[]) => c.tree.select(ids));
+  reg('_extensionLoadout.applyOnQuit', () => c.applyOnQuit());
+  reg('_extensionLoadout.undo', () => c.undo(false));
+  reg('_extensionLoadout.applyToFolders', async (folders: string[], mode: 'now' | 'quit' = 'now') => {
+    const { worktrees, others } = await c.otherFolderCandidates();
+    const picked = [...worktrees, ...others].filter((e) => folders.some((f) => e.folder.toLowerCase() === f.toLowerCase()));
+    if (mode === 'quit') await c.applyOnQuit(picked);
+    else await c.applyNow(picked);
+    return picked.map((p) => p.folder);
+  });
+  reg('_extensionLoadout.state', async () => {
+    const st = await c.refresh();
+    return { pending: st?.pending, scheduled: c.scheduledHere(), history: c.history().length, overrides: Object.fromEntries(st?.overrides ?? []), errors: st?.configErrors, conflicts: st?.conflicts };
+  });
+
+  void c.refresh().then((first) => {
+    // 저장소에 커밋된 loadout을 처음 연 경우처럼, 파일과 실제 적용 상태가 다르면 한 번 알려준다.
+    if (first?.pending && !c.current?.configErrors.length) {
+      void vscode.window
+        .showInformationMessage(t("This workspace has an extension loadout that isn't applied yet."), t('Apply and Restart'), t('Apply When VS Code Quits'), t('Show Loadout'))
+        .then((choice) => {
+          if (choice === t('Apply and Restart')) void c.applyNow();
+          if (choice === t('Apply When VS Code Quits')) void c.applyOnQuit();
+          if (choice === t('Show Loadout')) void vscode.commands.executeCommand('extensionLoadout.extensions.focus');
+        });
     }
-  };
-
-  const turnOffSuggested = async () => {
-    const ids = tree.activeSuggestions().map((x) => x.row.id);
-    const changed = await applyOverrides(ids, 'off');
-    if (changed) void offerRestart(`Turned off ${plural(changed)} for this folder.`);
-  };
-
-  const turnOffSelected = async () => {
-    const ids = tree.selectedIds();
-    if (!ids.length) {
-      vscode.window.showInformationMessage('Select extensions with the checkboxes first.');
-      return;
-    }
-    const changed = await applyOverrides(ids, 'off');
-    tree.clearSelection();
-    if (changed) void offerRestart(`Turned off ${plural(changed)} for this folder.`);
-    else vscode.window.showInformationMessage('The selected extensions are already off in this folder.');
-  };
-
-  const suggest = async () => {
-    const st = requireWorkspace();
-    if (!st) return;
-    await vscode.window.withProgress({ location: { viewId: 'extensionLoadout.extensions' } }, async () => {
-      const list = await findSuggestions(await model.snapshot(st));
-      if (!list.length) vscode.window.showInformationMessage('Nothing here is certainly unneeded. Every extension that starts on its own could be used in this folder.');
-    });
-    await vscode.commands.executeCommand('extensionLoadout.extensions.focus');
-  };
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('extensionLoadout.suggest', suggest),
-    vscode.commands.registerCommand('extensionLoadout.disableSuggested', turnOffSuggested),
-    // 테스트용: 현재 추천 목록(ID). 아직 계산하지 않았으면 계산한다.
-    vscode.commands.registerCommand('_extensionLoadout.suggestions', async () => {
-      const st = refresh();
-      if (!st) return [];
-      const list = await (suggestions ?? findSuggestions(await model.snapshot(st)));
-      return list.map((x) => x.id);
-    }),
-    vscode.commands.registerCommand('extensionLoadout.applyAndRestart', applyAndRestart),
-    vscode.commands.registerCommand('extensionLoadout.pick', pick),
-    vscode.commands.registerCommand('extensionLoadout.enableHere', (n?: unknown, many?: unknown) => setOverride(n, many, 'on')),
-    vscode.commands.registerCommand('extensionLoadout.disableHere', (n?: unknown, many?: unknown) => setOverride(n, many, 'off')),
-    vscode.commands.registerCommand('extensionLoadout.followGlobal', (n?: unknown, many?: unknown) => setOverride(n, many, undefined)),
-    vscode.commands.registerCommand('extensionLoadout.disableSelected', turnOffSelected),
-    vscode.commands.registerCommand('extensionLoadout.clearSelection', () => tree.clearSelection()),
-    // 테스트용: ID 목록을 선택 상태로 만든다.
-    vscode.commands.registerCommand('_extensionLoadout.select', (ids: string[]) => tree.select(ids)),
-    vscode.commands.registerCommand('extensionLoadout.refresh', () => refresh()),
-    vscode.commands.registerCommand('extensionLoadout.openConfig', async () => {
-      const s = requireWorkspace();
-      if (!s) return;
-      if (!fs.existsSync(model.configPath!)) await model.save(new Map(s.overrides));
-      await vscode.window.showTextDocument(vscode.Uri.file(model.configPath!));
-      refresh();
-    }),
-  );
-
-  const folder = model.workspaceFolder;
-  if (folder) {
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, '.vscode/extension-loadout.json'));
-    watcher.onDidChange(() => refresh());
-    watcher.onDidCreate(() => refresh());
-    watcher.onDidDelete(() => refresh());
-    context.subscriptions.push(watcher);
-  }
-
-  const first = refresh();
-  // 저장소에 커밋된 loadout을 처음 연 경우처럼, 파일과 실제 적용 상태가 다르면 한 번 알려준다.
-  if (first?.pending) {
-    void vscode.window
-      .showInformationMessage("This workspace has an extension loadout that isn't applied yet.", 'Apply and Restart', 'Show Loadout')
-      .then((choice) => {
-        if (choice === 'Apply and Restart') void applyAndRestart();
-        if (choice === 'Show Loadout') void vscode.commands.executeCommand('extensionLoadout.extensions.focus');
-      });
-  }
-  output.info(`Activated in ${Date.now() - started} ms`);
+    c.output.info(`Activated in ${Date.now() - started} ms`);
+  });
+  return c;
 }
 
 export function deactivate(): void {}

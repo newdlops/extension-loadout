@@ -140,6 +140,42 @@
         "title": "Refresh",
         "category": "Extension Loadout",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "extensionLoadout.applyMenu",
+        "title": "Apply Loadout…",
+        "category": "Extension Loadout",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "extensionLoadout.applyOnQuit",
+        "title": "Apply Loadout When VS Code Quits",
+        "category": "Extension Loadout",
+        "icon": "$(clock)"
+      },
+      {
+        "command": "extensionLoadout.cancelApplyOnQuit",
+        "title": "Cancel Apply on Quit",
+        "category": "Extension Loadout",
+        "icon": "$(close)"
+      },
+      {
+        "command": "extensionLoadout.applyToOtherFolders",
+        "title": "Apply Loadout to Other Folders…",
+        "category": "Extension Loadout",
+        "icon": "$(folder-library)"
+      },
+      {
+        "command": "extensionLoadout.undo",
+        "title": "Undo Last Apply",
+        "category": "Extension Loadout",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "extensionLoadout.resetToGlobal",
+        "title": "Reset Folder to Global Settings",
+        "category": "Extension Loadout",
+        "icon": "$(clear-all)"
       }
     ],
     "menus": {
@@ -155,8 +191,8 @@
           "group": "navigation@2"
         },
         {
-          "command": "extensionLoadout.applyAndRestart",
-          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && extensionLoadout.pending",
+          "command": "extensionLoadout.applyMenu",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && (extensionLoadout.pending || extensionLoadout.applyOnQuit)",
           "group": "navigation@3"
         },
         {
@@ -178,6 +214,31 @@
           "command": "extensionLoadout.refresh",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "navigation@7"
+        },
+        {
+          "command": "extensionLoadout.applyOnQuit",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && extensionLoadout.pending && !extensionLoadout.applyOnQuit",
+          "group": "1_apply@1"
+        },
+        {
+          "command": "extensionLoadout.cancelApplyOnQuit",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && extensionLoadout.applyOnQuit",
+          "group": "1_apply@2"
+        },
+        {
+          "command": "extensionLoadout.applyToOtherFolders",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
+          "group": "1_apply@3"
+        },
+        {
+          "command": "extensionLoadout.undo",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && extensionLoadout.canUndo",
+          "group": "2_history@1"
+        },
+        {
+          "command": "extensionLoadout.resetToGlobal",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
+          "group": "2_history@2"
         }
       ],
       "view/item/context": [
@@ -238,12 +299,39 @@
         {
           "command": "extensionLoadout.clearSelection",
           "when": "extensionLoadout.hasSelection"
+        },
+        {
+          "command": "extensionLoadout.applyMenu",
+          "when": "workbenchState != empty"
+        },
+        {
+          "command": "extensionLoadout.applyOnQuit",
+          "when": "workbenchState != empty"
+        },
+        {
+          "command": "extensionLoadout.cancelApplyOnQuit",
+          "when": "extensionLoadout.applyOnQuit"
+        },
+        {
+          "command": "extensionLoadout.applyToOtherFolders",
+          "when": "workbenchState != empty"
+        },
+        {
+          "command": "extensionLoadout.undo",
+          "when": "extensionLoadout.canUndo"
+        },
+        {
+          "command": "extensionLoadout.resetToGlobal",
+          "when": "workbenchState != empty"
         }
       ]
     },
     "jsonValidation": [
       {
-        "fileMatch": "**/.vscode/extension-loadout.json",
+        "fileMatch": [
+          "**/.vscode/extension-loadout.json",
+          "*.loadout.json"
+        ],
         "url": "./schemas/extension-loadout.schema.json"
       }
     ]
@@ -256,16 +344,21 @@
     "check-types": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "tsc -p tsconfig.test.json && node --test --test-reporter=spec \"out/test/unit/*.test.js\"",
-    "test:e2e": "npm run compile && node scripts/run-e2e.mjs && E2E_RELAUNCH=open node scripts/run-e2e.mjs",
+    "test:e2e": "npm run compile && node scripts/run-e2e.mjs",
     "vsce:package": "vsce package --no-dependencies",
     "vsce:publish": "vsce publish --no-dependencies",
-    "clean": "rm -rf dist out *.vsix"
+    "clean": "rm -rf dist out *.vsix",
+    "test:e2e:open": "npm run compile && node scripts/run-e2e.mjs --open"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "~1.101.0",
+    "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1"
   }
 }

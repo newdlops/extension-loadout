@@ -13,6 +13,8 @@ async function main() {
     sourcemap: !production,
     sourcesContent: false,
     platform: 'node',
+    // jsonc-parser의 UMD 빌드는 내부 모듈을 동적으로 require해서 번들에 들어가지 않는다. ESM 빌드를 쓴다.
+    mainFields: ['module', 'main'],
     target: 'node20',
     outdir: 'dist',
     external: ['vscode'],

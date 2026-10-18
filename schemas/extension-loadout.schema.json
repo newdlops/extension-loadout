@@ -1,22 +1,33 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Extension Loadout",
-  "description": "Extensions to turn on or off in this workspace. Extensions not listed follow the global setting.",
+  "description": "Extensions to turn on or off in this folder. Extensions not listed follow the global setting.",
   "type": "object",
-  "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
     "enable": {
-      "description": "Extension IDs (publisher.name) to turn on in this workspace, even if they are off globally.",
+      "description": "Extensions to turn on here, even if they are off globally. Use an ID (publisher.name), a pattern with * or ? (\"ms-toolsai.*\"), or !ID to exclude something a pattern in this list matched.",
       "type": "array",
-      "items": { "type": "string", "pattern": "^[^.\\s]+\\.[^\\s]+$" },
+      "items": { "$ref": "#/definitions/entry" },
       "uniqueItems": true
     },
     "disable": {
-      "description": "Extension IDs (publisher.name) to turn off in this workspace.",
+      "description": "Extensions to turn off here. Use an ID (publisher.name), a pattern with * or ? (\"ms-toolsai.*\"), or !ID to exclude something a pattern in this list matched.",
       "type": "array",
-      "items": { "type": "string", "pattern": "^[^.\\s]+\\.[^\\s]+$" },
+      "items": { "$ref": "#/definitions/entry" },
       "uniqueItems": true
+    },
+    "notes": {
+      "description": "Why an extension or pattern is on or off here. Shown in the Extension Loadout panel.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "definitions": {
+    "entry": {
+      "type": "string",
+      "pattern": "^!?(?:[^.\\s!]+\\.[^\\s!]+|[^\\s!]*[*?][^\\s!]*)$",
+      "patternErrorMessage": "Use publisher.name, a pattern such as ms-toolsai.*, or !publisher.name."
     }
   }
 }

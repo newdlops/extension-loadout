@@ -1,9 +1,12 @@
-// "적용하고 재시작": 도우미를 분리 실행한 뒤 VS Code를 종료한다.
+// 적용 경로 두 가지.
+//  - 지금 재시작: 도우미를 분리 실행한 뒤 VS Code를 종료한다. 도우미가 저장소를 고치고 VS Code를 다시 띄운다.
+//  - 종료할 때 적용: 계획 파일만 남기고 기다리는 도우미를 하나 띄운다. 사용자가 평소처럼 VS Code를 끌 때 적용된다.
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { PlanTarget, WAIT_AND_APPLY_SH, readPlanFiles, removePlanFiles, writePlanFiles } from './plan';
 import type { RestartPlan } from './restartHelper';
 
 /**
@@ -29,20 +32,80 @@ export function logPath(): string {
   return path.join(os.tmpdir(), 'extension-loadout-restart.log');
 }
 
-export async function restartWith(
-  context: vscode.ExtensionContext,
-  dbPath: string,
-  items: Record<string, string | null>,
-): Promise<void> {
+export const planDirOf = (context: vscode.ExtensionContext): string => path.join(context.globalStorageUri.fsPath, 'pending-apply');
+
+function mainPid(): number {
   // 확장 호스트의 부모가 VS Code 메인 프로세스다.
-  const mainPid = process.ppid;
-  if (!mainPid || mainPid <= 1) throw new Error('Could not find the VS Code main process.');
-  const plan: RestartPlan = { mainPid, dbPath, items, relaunch: relaunchCommand(), logPath: logPath() };
+  const pid = process.ppid;
+  if (!pid || pid <= 1) throw new Error('Could not find the VS Code main process.');
+  return pid;
+}
+
+function spawnNodeHelper(context: vscode.ExtensionContext, plan: RestartPlan): number | undefined {
   const helper = context.asAbsolutePath(path.join('dist', 'restartHelper.js'));
-  spawn(process.execPath, [helper, JSON.stringify(plan)], {
+  // 명령줄 길이 제한을 피하려고 계획은 파일로 넘긴다.
+  const planFile = path.join(os.tmpdir(), `extension-loadout-plan-${process.pid}-${Date.now()}.json`);
+  fs.writeFileSync(planFile, JSON.stringify(plan));
+  const child = spawn(process.execPath, [helper, `@${planFile}`], {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-  }).unref();
+  });
+  child.unref();
+  return child.pid;
+}
+
+/** 지금 적용: 도우미를 띄우고 VS Code를 종료한다. 같은 저장소에 걸린 "종료할 때 적용" 계획은 이번 계획으로 대체한다. */
+export async function restartNow(context: vscode.ExtensionContext, targets: PlanTarget[]): Promise<void> {
+  const planDir = planDirOf(context);
+  removePlanFiles(planDir, targets.map((t) => t.dbPath));
+  spawnNodeHelper(context, { mainPid: mainPid(), targets, planDir, relaunch: relaunchCommand(), logPath: logPath() });
   await vscode.commands.executeCommand('workbench.action.quit');
+}
+
+function sqliteCli(): string | undefined {
+  if (process.platform === 'win32') return undefined;
+  return ['/usr/bin/sqlite3', '/usr/local/bin/sqlite3', '/opt/homebrew/bin/sqlite3', '/bin/sqlite3'].find((p) => fs.existsSync(p));
+}
+
+function helperAlive(planDir: string): boolean {
+  try {
+    const pid = Number(fs.readFileSync(path.join(planDir, 'helper.pid'), 'utf8').trim());
+    if (!pid) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 계획 파일이 남아 있는데 기다리는 도우미가 없으면 하나 띄운다. 확장이 켜질 때마다 불러도 된다. */
+export function ensureQuitHelper(context: vscode.ExtensionContext): void {
+  const planDir = planDirOf(context);
+  if (!readPlanFiles(planDir).length || helperAlive(planDir)) return;
+  const cli = sqliteCli();
+  if (cli) {
+    // sh + sqlite3: 기다리는 동안 거의 자원을 쓰지 않는다.
+    spawn('/bin/sh', ['-c', WAIT_AND_APPLY_SH, 'extension-loadout-helper', String(mainPid()), planDir, logPath(), cli], {
+      detached: true,
+      stdio: 'ignore',
+    }).unref();
+    return;
+  }
+  const pid = spawnNodeHelper(context, { mainPid: mainPid(), planDir, logPath: logPath(), timeoutMs: 30 * 24 * 3600_000, pollMs: 500 });
+  if (pid) fs.writeFileSync(path.join(planDir, 'helper.pid'), String(pid));
+}
+
+/** 종료할 때 적용: 계획을 남기고 기다리는 도우미를 확인한다. */
+export function scheduleOnQuit(context: vscode.ExtensionContext, targets: PlanTarget[]): void {
+  writePlanFiles(planDirOf(context), targets);
+  ensureQuitHelper(context);
+}
+
+export function cancelOnQuit(context: vscode.ExtensionContext, dbPaths?: string[]): void {
+  removePlanFiles(planDirOf(context), dbPaths);
+}
+
+export function pendingOnQuit(context: vscode.ExtensionContext): PlanTarget[] {
+  return readPlanFiles(planDirOf(context)).map((x) => x.target);
 }

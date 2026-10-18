@@ -1,20 +1,36 @@
 // 현재 워크스페이스의 loadout 상태를 한곳에 모은다: 설치 목록, 전역 설정, 저장소에 적용된 값, loadout 파일, 실행 중인 확장.
+//
+// loadout 파일 위치
+//  - 폴더 하나를 연 창: <폴더>/.vscode/extension-loadout.json
+//  - 저장된 멀티 루트 작업 영역(.code-workspace): 그 옆의 <이름>.loadout.json을 고치고, 각 폴더의
+//    .vscode/extension-loadout.json은 읽기만 해서 합친다(폴더끼리 다르면 켜는 쪽).
+//  - 저장하지 않은 멀티 루트: 첫 폴더의 파일을 고치고 나머지 폴더 파일을 합친다.
+// VS Code의 작업 영역별 확장 활성 상태는 창(작업 영역) 하나에 하나뿐이라, 폴더별로 다르게 적용할 수는 없다.
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { InstalledExtension, readInstalledExtensions } from './catalog';
+import { InstalledExtension, catalogSourcesFor, extensionFromManifest, readInstalledExtensions } from './catalog';
 import {
   DISABLED_KEY,
   ENABLED_KEY,
+  LayerValue,
+  LoadoutChange,
+  LoadoutRules,
+  Override,
   Overrides,
   StoredIdentifier,
+  editLoadoutText,
+  emptyRules,
+  hasPatterns,
   isPending,
+  mergeLayers,
+  noteFor,
   normalizeId,
   overridesFromStored,
-  parseLoadout,
+  parseLoadoutRules,
   parseStoredIdentifiers,
-  serializeLoadout,
+  resolveRules,
 } from './loadout';
 import { readItems } from './stateDb';
 
@@ -22,7 +38,7 @@ export const LOADOUT_FILE = path.join('.vscode', 'extension-loadout.json');
 
 export interface ExtensionRow extends InstalledExtension {
   globallyEnabled: boolean;
-  override?: 'on' | 'off';
+  override?: Override;
   desiredOn: boolean;
   /** 이 창의 확장 호스트에 올라와 있음(켜져 있음). */
   running: boolean;
@@ -30,16 +46,30 @@ export interface ExtensionRow extends InstalledExtension {
   active: boolean;
   /** 자기 자신은 끌 수 없다. */
   locked: boolean;
+  /** loadout 파일의 메모. */
+  note?: string;
+  /** 패턴으로 정해졌으면 그 패턴. */
+  via?: string;
+  /** 멀티 루트에서 다른 폴더 파일로부터 물려받았으면 그 폴더 이름. */
+  inheritedFrom?: string[];
 }
 
 /** 상태 표시줄과 적용 여부 판단에 필요한 가벼운 상태. loadout 파일과 워크스페이스 저장소만 읽는다. */
 export interface LoadoutStatus {
   overrides: Overrides;
-  /** loadout 파일이 없으면 워크스페이스 저장소에 기록된 값에서 시작한다. */
+  /** loadout 파일이 하나라도 있는지. 없으면 워크스페이스 저장소에 기록된 값에서 시작한다. */
   configExists: boolean;
   configErrors: string[];
+  /** 멀티 루트에서 폴더 파일끼리 부딪힌 설정. */
+  conflicts: string[];
   /** 파일과 워크스페이스 저장소가 달라 재시작이 필요한 상태. */
   pending: boolean;
+  /** 편집 대상 파일의 규칙(메모 포함). */
+  rules: LoadoutRules;
+  /** 확장별로 어느 패턴이 정했는지. */
+  via: Map<string, string>;
+  inherited: Map<string, { value: Override; from: string[] }>;
+  notes: Record<string, string>;
 }
 
 /** 목록 화면용 전체 상태. 설치된 확장 매니페스트까지 읽는다. */
@@ -49,6 +79,21 @@ export interface LoadoutSnapshot extends LoadoutStatus {
   missing: string[];
 }
 
+export interface LoadoutLocation {
+  /** 이 창에서 고치는 파일. */
+  editable?: string;
+  /** 읽기만 해서 합치는 파일(멀티 루트의 각 폴더). */
+  inputs: { name: string; file: string }[];
+}
+
+const readText = (file: string): string | undefined => {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return undefined;
+  }
+};
+
 export class LoadoutModel {
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -56,15 +101,32 @@ export class LoadoutModel {
     return vscode.workspace.workspaceFolders?.[0];
   }
 
+  location(): LoadoutLocation {
+    const folders = (vscode.workspace.workspaceFolders ?? []).filter((f) => f.uri.scheme === 'file');
+    const fileOf = (f: vscode.WorkspaceFolder) => path.join(f.uri.fsPath, LOADOUT_FILE);
+    const wf = vscode.workspace.workspaceFile;
+    if (wf && wf.scheme === 'file') {
+      const editable = path.join(path.dirname(wf.fsPath), `${path.basename(wf.fsPath).replace(/\.code-workspace$/i, '')}.loadout.json`);
+      return { editable, inputs: folders.map((f) => ({ name: f.name, file: fileOf(f) })) };
+    }
+    if (!folders.length) return { inputs: [] };
+    return { editable: fileOf(folders[0]), inputs: folders.slice(1).map((f) => ({ name: f.name, file: fileOf(f) })) };
+  }
+
   get configPath(): string | undefined {
-    const folder = this.workspaceFolder;
-    return folder && folder.uri.scheme === 'file' ? path.join(folder.uri.fsPath, LOADOUT_FILE) : undefined;
+    return this.location().editable;
   }
 
   /** 이 창의 워크스페이스 저장소. storageUri의 부모 폴더에 state.vscdb가 있다. */
   get workspaceDbPath(): string | undefined {
     const uri = this.context.storageUri;
     return uri ? path.join(path.dirname(uri.fsPath), 'state.vscdb') : undefined;
+  }
+
+  /** 모든 작업 영역 저장소가 모인 폴더(.../User/workspaceStorage). */
+  get workspaceStorageRoot(): string | undefined {
+    const uri = this.context.storageUri;
+    return uri ? path.dirname(path.dirname(uri.fsPath)) : undefined;
   }
 
   get globalDbPath(): string {
@@ -86,10 +148,20 @@ export class LoadoutModel {
     return path.join(os.homedir(), dataFolder, 'extensions');
   }
 
-  readStored(): { enabled: StoredIdentifier[]; disabled: StoredIdentifier[] } {
-    const db = this.workspaceDbPath;
-    if (!db || !fs.existsSync(db)) return { enabled: [], disabled: [] };
-    const v = readItems(db, [ENABLED_KEY, DISABLED_KEY]);
+  installed(): Promise<InstalledExtension[]> {
+    return readInstalledExtensions(catalogSourcesFor(this.extensionsDir(), this.context.globalStorageUri.fsPath));
+  }
+
+  /** VS Code에 들어 있는 기본 확장(메모리 표시용). */
+  builtins(): InstalledExtension[] {
+    return vscode.extensions.all
+      .filter((e) => e.packageJSON?.isBuiltin)
+      .map((e) => extensionFromManifest(e.packageJSON, { id: e.id, location: e.extensionPath, builtin: true }));
+  }
+
+  readStored(dbPath = this.workspaceDbPath): { enabled: StoredIdentifier[]; disabled: StoredIdentifier[] } {
+    if (!dbPath || !fs.existsSync(dbPath)) return { enabled: [], disabled: [] };
+    const v = readItems(dbPath, [ENABLED_KEY, DISABLED_KEY]);
     return { enabled: parseStoredIdentifiers(v[ENABLED_KEY]), disabled: parseStoredIdentifiers(v[DISABLED_KEY]) };
   }
 
@@ -99,35 +171,67 @@ export class LoadoutModel {
     return new Set(parseStoredIdentifiers(v).map((e) => normalizeId(e.id)));
   }
 
-  status(): LoadoutStatus {
+  async status(): Promise<LoadoutStatus> {
     const stored = this.readStored();
-    let overrides = overridesFromStored(stored.enabled, stored.disabled);
-    let configExists = false;
-    let configErrors: string[] = [];
-    const configPath = this.configPath;
-    if (configPath && fs.existsSync(configPath)) {
-      configExists = true;
-      const parsed = parseLoadout(fs.readFileSync(configPath, 'utf8'));
-      configErrors = parsed.errors;
-      overrides = parsed.overrides;
+    const loc = this.location();
+    const editableText = loc.editable ? readText(loc.editable) : undefined;
+    const inputs = loc.inputs.map((i) => ({ ...i, text: readText(i.file) })).filter((i) => i.text !== undefined);
+    const configErrors: string[] = [];
+    const parsedEditable = editableText !== undefined ? parseLoadoutRules(editableText) : undefined;
+    if (parsedEditable) configErrors.push(...parsedEditable.errors);
+    const parsedInputs = inputs.map((i) => {
+      const p = parseLoadoutRules(i.text!);
+      configErrors.push(...p.errors.map((e) => `${i.name}: ${e}`));
+      return { name: i.name, rules: p.rules };
+    });
+    const configExists = !!parsedEditable || parsedInputs.length > 0;
+    const rules = parsedEditable?.rules ?? emptyRules();
+    if (!configExists) {
+      const overrides = overridesFromStored(stored.enabled, stored.disabled);
+      return { overrides, configExists, configErrors, conflicts: [], pending: false, rules, via: new Map(), inherited: new Map(), notes: {} };
     }
+    // 패턴이 있을 때만 설치 목록을 읽는다(없으면 가벼운 경로).
+    const needIds = [rules, ...parsedInputs.map((p) => p.rules)].some(hasPatterns);
+    const known = needIds ? (await this.installed()).map((e) => e.id) : [];
+    const via = new Map<string, string>();
+    const layer = (r: LoadoutRules) => {
+      const res = resolveRules(r, known);
+      configErrors.push(...res.errors);
+      for (const [id, p] of res.via) if (p !== id) via.set(id, p);
+      return res.values;
+    };
+    const merged = mergeLayers(
+      parsedInputs.map((p) => ({ name: p.name, values: layer(p.rules) })),
+      parsedEditable ? layer(rules) : undefined,
+    );
+    const notes = Object.assign({}, ...parsedInputs.map((p) => p.rules.notes), rules.notes) as Record<string, string>;
+    const overrides = merged.overrides;
+    overrides.delete(this.selfId);
+    const blocking = configErrors.some((e) => /Not valid JSON|must be/.test(e));
     return {
       overrides,
       configExists,
       configErrors,
-      pending: configExists && configErrors.length === 0 && isPending(overrides, stored.enabled, stored.disabled),
+      conflicts: merged.conflicts,
+      pending: !blocking && isPending(overrides, stored.enabled, stored.disabled),
+      rules,
+      via,
+      inherited: merged.inherited,
+      notes,
     };
   }
 
-  async snapshot(status: LoadoutStatus = this.status()): Promise<LoadoutSnapshot> {
-    const { overrides } = status;
+  async snapshot(status?: LoadoutStatus): Promise<LoadoutSnapshot> {
+    const st = status ?? (await this.status());
+    const { overrides } = st;
     const globallyDisabled = this.readGloballyDisabled();
     const loaded = new Map(vscode.extensions.all.map((e) => [normalizeId(e.id), e]));
-    const installed = await readInstalledExtensions(this.extensionsDir());
+    const installed = await this.installed();
     const rows: ExtensionRow[] = installed.map((ext) => {
       const globallyEnabled = !globallyDisabled.has(ext.id);
       const override = overrides.get(ext.id);
       const live = loaded.get(ext.id);
+      const inherited = st.inherited.get(ext.id);
       return {
         ...ext,
         globallyEnabled,
@@ -136,17 +240,48 @@ export class LoadoutModel {
         running: !!live,
         active: !!live?.isActive,
         locked: ext.id === this.selfId,
+        note: noteFor(st.notes, ext.id),
+        via: st.via.get(ext.id),
+        inheritedFrom: inherited && override === inherited.value ? inherited.from : undefined,
       };
     });
     const known = new Set(rows.map((r) => r.id));
-    return { ...status, rows, missing: [...overrides.keys()].filter((id) => !known.has(id)) };
+    return { ...st, rows, missing: [...overrides.keys()].filter((id) => !known.has(id)) };
   }
 
-  async save(overrides: Overrides): Promise<void> {
-    const configPath = this.configPath;
-    if (!configPath) throw new Error('Open a local folder first.');
-    overrides.delete(this.selfId);
-    await fs.promises.mkdir(path.dirname(configPath), { recursive: true });
-    await fs.promises.writeFile(configPath, serializeLoadout(overrides), 'utf8');
+  /** 변경을 편집 대상 파일에 반영한다. 패턴·메모·다른 내용은 보존한다. */
+  async save(changes: LoadoutChange[], status?: LoadoutStatus): Promise<void> {
+    const file = this.configPath;
+    if (!file) throw new Error('Open a local folder first.');
+    const st = status ?? (await this.status());
+    // 파일이 아직 없으면 지금 적용된 상태(저장소)에서 시작한다.
+    let base = readText(file);
+    if (base === undefined && !st.configExists && st.overrides.size) {
+      base = editLoadoutText(undefined, [...st.overrides].map(([id, value]) => ({ id, value })));
+    }
+    const inherited = new Map([...st.inherited].map(([id, x]) => [id, x.value]));
+    const text = editLoadoutText(
+      base,
+      changes.filter((c) => normalizeId(c.id) !== this.selfId),
+      inherited,
+    );
+    await this.writeConfigText(text);
+  }
+
+  async writeConfigText(text: string | undefined): Promise<void> {
+    const file = this.configPath;
+    if (!file) throw new Error('Open a local folder first.');
+    if (text === undefined) {
+      await fs.promises.rm(file, { force: true });
+      return;
+    }
+    await fs.promises.mkdir(path.dirname(file), { recursive: true });
+    await fs.promises.writeFile(file, text, 'utf8');
+  }
+
+  readConfigText(): string | undefined {
+    return this.configPath ? readText(this.configPath) : undefined;
   }
 }
+
+export type { LayerValue };

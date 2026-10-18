@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { activationText, describeActivation, readInstalledExtensions } from '../../src/catalog';
+import { activationText, catalogSourcesFor, describeActivation, extensionFromManifest, readInstalledExtensions } from '../../src/catalog';
 
 test('describeActivation tells always-on, triggered and code-less extensions apart', () => {
   assert.deepEqual(describeActivation({ main: './x.js', activationEvents: ['onStartupFinished'] }), {
@@ -58,4 +58,52 @@ test('readInstalledExtensions fills icon, publisher, categories and caches until
   const later = new Date(Date.now() + 5000);
   fs.utimesSync(index, later, later);
   assert.equal((await readInstalledExtensions(dir))[0].displayName, 'Renamed');
+});
+
+test('extensionFromManifest separates extensionDependencies from extensionPack', () => {
+  const e = extensionFromManifest(
+    { name: 'pack', publisher: 'p', extensionDependencies: ['A.Dep'], extensionPack: ['B.Member', 'c.member'] },
+    { id: 'p.pack', location: '/x' },
+  );
+  assert.deepEqual(e.dependencies, ['a.dep']);
+  assert.deepEqual(e.packMembers, ['b.member', 'c.member']);
+});
+
+test('catalogSourcesFor uses the profile list plus application-scoped extensions in a non-default profile', () => {
+  const ext = path.join('/home/u/.vscode/extensions');
+  const user = path.join('/home/u/.config/Code/User');
+  assert.deepEqual(catalogSourcesFor(ext, path.join(user, 'globalStorage', 'newdlops.extension-loadout')), [
+    { index: path.join(ext, 'extensions.json'), baseDir: ext },
+  ]);
+  assert.deepEqual(catalogSourcesFor(ext, path.join(user, 'profiles', '-6829', 'globalStorage', 'newdlops.extension-loadout')), [
+    { index: path.join(user, 'profiles', '-6829', 'extensions.json'), baseDir: ext },
+    { index: path.join(ext, 'extensions.json'), baseDir: ext, applicationScopedOnly: true },
+  ]);
+});
+
+test('readInstalledExtensions merges a profile list with application-scoped default extensions', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loadout-profile-'));
+  const ext = path.join(root, 'extensions');
+  const mkExt = (folder: string, name: string) => {
+    fs.mkdirSync(path.join(ext, folder), { recursive: true });
+    fs.writeFileSync(path.join(ext, folder, 'package.json'), JSON.stringify({ name, publisher: 'p', displayName: name }));
+  };
+  mkExt('p.inprofile-1.0.0', 'inprofile');
+  mkExt('p.everywhere-1.0.0', 'everywhere');
+  mkExt('p.defaultonly-1.0.0', 'defaultonly');
+  fs.writeFileSync(
+    path.join(ext, 'extensions.json'),
+    JSON.stringify([
+      { identifier: { id: 'p.everywhere' }, version: '1.0.0', relativeLocation: 'p.everywhere-1.0.0', metadata: { isApplicationScoped: true } },
+      { identifier: { id: 'p.defaultonly' }, version: '1.0.0', relativeLocation: 'p.defaultonly-1.0.0' },
+    ]),
+  );
+  const profile = path.join(root, 'User', 'profiles', 'abc');
+  fs.mkdirSync(profile, { recursive: true });
+  fs.writeFileSync(
+    path.join(profile, 'extensions.json'),
+    JSON.stringify([{ identifier: { id: 'p.inprofile' }, version: '1.0.0', location: { fsPath: path.join(ext, 'p.inprofile-1.0.0') } }]),
+  );
+  const list = await readInstalledExtensions(catalogSourcesFor(ext, path.join(profile, 'globalStorage', 'me.ext')));
+  assert.deepEqual(list.map((e) => e.id).sort(), ['p.everywhere', 'p.inprofile']);
 });

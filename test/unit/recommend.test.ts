@@ -12,7 +12,7 @@ const ext = (id: string, manifest: Record<string, unknown>, extra: Partial<Sugge
   id,
   displayName: id,
   activation: describeActivation({ main: './x.js', ...manifest }),
-  dependsOn: [],
+  dependencies: [],
   desiredOn: true,
   locked: false,
   ...extra,
@@ -30,7 +30,7 @@ test('planSuggestions keeps only extensions that start for checkable, specific t
     ext('already.off', { activationEvents: ['onLanguage:rust'] }, { desiredOn: false }),
     ext('self', { activationEvents: ['onLanguage:rust'] }, { locked: true }),
     ext('lib.kotlin', { activationEvents: ['onLanguage:kotlin'] }),
-    ext('needs.lib', { activationEvents: ['onStartupFinished'] }, { dependsOn: ['lib.kotlin'] }),
+    ext('needs.lib', { activationEvents: ['onStartupFinished'] }, { dependencies: ['lib.kotlin'] }),
   ];
   assert.deepEqual(
     planSuggestions(rows, langs).map((c) => c.id),
