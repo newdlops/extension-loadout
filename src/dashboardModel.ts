@@ -1,5 +1,5 @@
 // 대시보드(표)에 보낼 데이터. vscode 모듈에 의존하지 않는다.
-import { activationText } from './catalog';
+import type { Activation } from './catalog';
 import type { LearnedSuggestion } from './learning';
 import type { ExtensionRow } from './model';
 import type { ExtMemory } from './processes';
@@ -48,10 +48,16 @@ export function buildDashRows(input: {
   learned: LearnedSuggestion[];
   recommended: Set<string>;
   iconUri: (file: string) => string;
+  /** 문장 만들기(번역). */
+  text: {
+    starts: (a: Activation, packCount: number) => string;
+    suggestion: (s: Suggestion) => string;
+    learned: (l: LearnedSuggestion) => string;
+  };
 }): DashRow[] {
   const mem = new Map(input.memory.map((m) => [m.id, m]));
-  const sug = new Map(input.suggestions.map((s) => [s.id, s.reason]));
-  const lrn = new Map(input.learned.map((l) => [l.id, l.reason]));
+  const sug = new Map(input.suggestions.map((s) => [s.id, input.text.suggestion(s)]));
+  const lrn = new Map(input.learned.map((l) => [l.id, input.text.learned(l)]));
   return input.rows.map((r) => {
     const m = mem.get(r.id);
     return {
@@ -66,7 +72,7 @@ export function buildDashRows(input: {
       desiredOn: r.desiredOn,
       running: r.running,
       active: r.active,
-      starts: r.packMembers.length ? `pack · ${r.packMembers.length}` : activationText(r.activation),
+      starts: input.text.starts(r.activation, r.packMembers.length),
       startsAlways: r.activation.kind === 'always',
       memory: m?.bytes ?? 0,
       allWindowsMemory: m?.allWindowsBytes ?? 0,

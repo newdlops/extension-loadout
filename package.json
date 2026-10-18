@@ -1,7 +1,7 @@
 {
   "name": "extension-loadout",
   "displayName": "Extension Loadout",
-  "description": "Equip each workspace with only the extensions it needs: turn extensions on or off per folder from one panel, saved in .vscode/extension-loadout.json.",
+  "description": "%description%",
   "version": "0.4.0",
   "publisher": "newdlops",
   "icon": "media/icon.png",
@@ -40,7 +40,7 @@
       "activitybar": [
         {
           "id": "extensionLoadout",
-          "title": "Extension Loadout",
+          "title": "%viewsContainer.title%",
           "icon": "media/loadout.svg"
         }
       ]
@@ -49,15 +49,15 @@
       "extensionLoadout": [
         {
           "id": "extensionLoadout.extensions",
-          "name": "This Folder"
+          "name": "%view.folder.name%"
         }
       ],
       "explorer": [
         {
           "id": "extensionLoadout.explorer",
-          "name": "Extension Loadout",
+          "name": "%view.explorer.name%",
           "icon": "media/loadout.svg",
-          "contextualTitle": "Extension Loadout",
+          "contextualTitle": "%view.explorer.contextualTitle%",
           "visibility": "collapsed"
         }
       ]
@@ -65,175 +65,175 @@
     "viewsWelcome": [
       {
         "view": "extensionLoadout.extensions",
-        "contents": "Open a folder to choose which extensions run in it.",
+        "contents": "%viewsWelcome.noFolder%",
         "when": "workbenchState == empty"
       },
       {
         "view": "extensionLoadout.explorer",
-        "contents": "Open a folder to choose which extensions run in it.",
+        "contents": "%viewsWelcome.noFolder%",
         "when": "workbenchState == empty"
       }
     ],
     "commands": [
       {
         "command": "extensionLoadout.applyAndRestart",
-        "title": "Apply Loadout and Restart VS Code",
+        "title": "%command.applyAndRestart%",
         "category": "Extension Loadout",
         "icon": "$(debug-restart)"
       },
       {
         "command": "extensionLoadout.disableSelected",
-        "title": "Turn Off Selected",
+        "title": "%command.disableSelected%",
         "category": "Extension Loadout",
         "icon": "$(circle-slash)"
       },
       {
         "command": "extensionLoadout.clearSelection",
-        "title": "Clear Selection",
+        "title": "%command.clearSelection%",
         "category": "Extension Loadout",
         "icon": "$(clear-all)"
       },
       {
         "command": "extensionLoadout.suggest",
-        "title": "Find Extensions This Folder Doesn't Need",
+        "title": "%command.suggest%",
         "category": "Extension Loadout",
         "icon": "$(lightbulb)"
       },
       {
         "command": "extensionLoadout.disableSuggested",
-        "title": "Turn Off All Suggested",
+        "title": "%command.disableSuggested%",
         "category": "Extension Loadout",
         "icon": "$(circle-slash)"
       },
       {
         "command": "extensionLoadout.pick",
-        "title": "Choose Extensions for This Workspace...",
+        "title": "%command.pick%",
         "category": "Extension Loadout",
         "icon": "$(checklist)"
       },
       {
         "command": "extensionLoadout.enableHere",
-        "title": "Turn On in This Workspace",
+        "title": "%command.enableHere%",
         "category": "Extension Loadout",
         "icon": "$(pass-filled)"
       },
       {
         "command": "extensionLoadout.disableHere",
-        "title": "Turn Off in This Workspace",
+        "title": "%command.disableHere%",
         "category": "Extension Loadout",
         "icon": "$(circle-slash)"
       },
       {
         "command": "extensionLoadout.followGlobal",
-        "title": "Follow Global Setting",
+        "title": "%command.followGlobal%",
         "category": "Extension Loadout",
         "icon": "$(discard)"
       },
       {
         "command": "extensionLoadout.openConfig",
-        "title": "Open Loadout File",
+        "title": "%command.openConfig%",
         "category": "Extension Loadout",
         "icon": "$(go-to-file)"
       },
       {
         "command": "extensionLoadout.refresh",
-        "title": "Refresh",
+        "title": "%command.refresh%",
         "category": "Extension Loadout",
         "icon": "$(refresh)"
       },
       {
         "command": "extensionLoadout.applyMenu",
-        "title": "Apply Loadout…",
+        "title": "%command.applyMenu%",
         "category": "Extension Loadout",
         "icon": "$(debug-restart)"
       },
       {
         "command": "extensionLoadout.applyOnQuit",
-        "title": "Apply Loadout When VS Code Quits",
+        "title": "%command.applyOnQuit%",
         "category": "Extension Loadout",
         "icon": "$(clock)"
       },
       {
         "command": "extensionLoadout.cancelApplyOnQuit",
-        "title": "Cancel Apply on Quit",
+        "title": "%command.cancelApplyOnQuit%",
         "category": "Extension Loadout",
         "icon": "$(close)"
       },
       {
         "command": "extensionLoadout.applyToOtherFolders",
-        "title": "Apply Loadout to Other Folders…",
+        "title": "%command.applyToOtherFolders%",
         "category": "Extension Loadout",
         "icon": "$(folder-library)"
       },
       {
         "command": "extensionLoadout.undo",
-        "title": "Undo Last Apply",
+        "title": "%command.undo%",
         "category": "Extension Loadout",
         "icon": "$(discard)"
       },
       {
         "command": "extensionLoadout.resetToGlobal",
-        "title": "Reset Folder to Global Settings",
+        "title": "%command.resetToGlobal%",
         "category": "Extension Loadout",
         "icon": "$(clear-all)"
       },
       {
         "command": "extensionLoadout.showMemory",
-        "title": "Show Extension Memory",
+        "title": "%command.showMemory%",
         "category": "Extension Loadout",
         "icon": "$(pulse)"
       },
       {
         "command": "extensionLoadout.measureMemory",
-        "title": "Measure Memory Again",
+        "title": "%command.measureMemory%",
         "category": "Extension Loadout",
         "icon": "$(sync)"
       },
       {
         "command": "extensionLoadout.restartExtensionHost",
-        "title": "Restart Extension Host (Free Extension Memory)",
+        "title": "%command.restartExtensionHost%",
         "category": "Extension Loadout",
         "icon": "$(debug-restart-frame)"
       },
       {
         "command": "extensionLoadout.disableLearned",
-        "title": "Turn Off All Usually-Off Extensions",
+        "title": "%command.disableLearned%",
         "category": "Extension Loadout",
         "icon": "$(circle-slash)"
       },
       {
         "command": "extensionLoadout.installRecommended",
-        "title": "Install Recommended Extension",
+        "title": "%command.installRecommended%",
         "category": "Extension Loadout",
         "icon": "$(cloud-download)"
       },
       {
         "command": "extensionLoadout.savePreset",
-        "title": "Save Loadout as Preset…",
+        "title": "%command.savePreset%",
         "category": "Extension Loadout",
         "icon": "$(save)"
       },
       {
         "command": "extensionLoadout.applyPreset",
-        "title": "Apply Preset to This Folder…",
+        "title": "%command.applyPreset%",
         "category": "Extension Loadout",
         "icon": "$(symbol-misc)"
       },
       {
         "command": "extensionLoadout.deletePreset",
-        "title": "Delete Preset…",
+        "title": "%command.deletePreset%",
         "category": "Extension Loadout",
         "icon": "$(trash)"
       },
       {
         "command": "extensionLoadout.viewOptions",
-        "title": "Filter and Sort…",
+        "title": "%command.viewOptions%",
         "category": "Extension Loadout",
         "icon": "$(filter)"
       },
       {
         "command": "extensionLoadout.openDashboard",
-        "title": "Open Loadout Dashboard",
+        "title": "%command.openDashboard%",
         "category": "Extension Loadout",
         "icon": "$(table)"
       }
@@ -462,23 +462,23 @@
       }
     ],
     "configuration": {
-      "title": "Extension Loadout",
+      "title": "%config.title%",
       "properties": {
         "extensionLoadout.memoryWatch.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Check the system memory pressure every minute while Extension Loadout is active, and show which extensions use memory in this window when it gets tight."
+          "description": "%config.memoryWatch.enabled%"
         },
         "extensionLoadout.memoryWatch.notify": {
           "type": "boolean",
           "default": true,
-          "description": "Show a notification (once per session) when memory gets tight. The status bar indicator is shown either way."
+          "description": "%config.memoryWatch.notify%"
         },
         "extensionLoadout.heavyThresholdMB": {
           "type": "number",
           "default": 500,
           "minimum": 50,
-          "description": "Extensions whose processes use at least this many MB in this window are highlighted as heavy."
+          "description": "%config.heavyThresholdMB%"
         }
       }
     }
@@ -507,5 +507,6 @@
   },
   "dependencies": {
     "jsonc-parser": "^3.3.1"
-  }
+  },
+  "l10n": "./l10n"
 }

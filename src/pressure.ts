@@ -10,8 +10,14 @@ export type PressureLevel = 'normal' | 'warn' | 'critical';
 
 export interface Pressure {
   level: PressureLevel;
-  /** 사람이 읽는 근거. 예: "kernel pressure level 2 · swap 8.0 / 9.0 GB". */
+  /** 어디서 판단했는지. */
+  source: 'kernel' | 'psi' | 'free';
+  /** 영어 근거(로그용). 화면은 아래 수치로 번역한 문장을 만든다. */
   detail: string;
+  swapUsed?: number;
+  swapTotal?: number;
+  free?: number;
+  total?: number;
 }
 
 export const rank = (l: PressureLevel): number => ({ normal: 0, warn: 1, critical: 2 })[l];
@@ -57,16 +63,22 @@ export async function readPressure(platform: NodeJS.Platform = process.platform)
   if (platform === 'darwin') {
     const level = levelFromDarwin(Number(await sysctl('kern.memorystatus_vm_pressure_level')));
     const swap = parseSwapUsage(await sysctl('vm.swapusage').catch(() => ''));
-    return { level, detail: `kernel memory pressure: ${level}${swap ? ` · swap ${gb(swap.used)} / ${gb(swap.total)}` : ''}` };
+    return {
+      level,
+      source: 'kernel',
+      detail: `kernel memory pressure: ${level}${swap ? ` · swap ${gb(swap.used)} / ${gb(swap.total)}` : ''}`,
+      swapUsed: swap?.used,
+      swapTotal: swap?.total,
+    };
   }
   if (platform === 'linux') {
     try {
       const level = levelFromPsi(await fs.promises.readFile('/proc/pressure/memory', 'utf8'));
-      if (level) return { level, detail: `memory pressure (PSI): ${level}` };
+      if (level) return { level, source: 'psi', detail: `memory pressure (PSI): ${level}` };
     } catch {
       // PSI가 없는 커널
     }
   }
   const level = levelFromFree(os.freemem(), os.totalmem());
-  return { level, detail: `${gb(os.freemem())} of ${gb(os.totalmem())} free` };
+  return { level, source: 'free', detail: `${gb(os.freemem())} of ${gb(os.totalmem())} free`, free: os.freemem(), total: os.totalmem() };
 }

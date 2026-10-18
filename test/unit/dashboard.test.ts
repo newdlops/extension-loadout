@@ -31,6 +31,7 @@ test('buildDashRows merges memory, suggestions, learned and repo flags per exten
     learned: [{ id: 'c.c', reason: 'similar', folders: ['w'] }, { id: 'a.a', reason: 'similar', folders: ['w'] }],
     recommended: new Set(['b.b']),
     iconUri: (f) => `webview:${f}`,
+    text: { starts: (a, n) => (n ? `pack ${n}` : a.kind), suggestion: (s) => s.reason, learned: (l) => l.reason },
   });
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
   assert.equal(by['a.a'].icon, 'webview:/x/a.a/icon.png');

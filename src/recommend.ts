@@ -45,7 +45,12 @@ export interface Candidate {
 
 export interface Suggestion {
   id: string;
+  /** 영어 사유(로그·테스트용). 화면은 what으로 번역한 문장을 쓴다. */
   reason: string;
+  /** 없는 것들(예: "rust files (*.rs)", "Cargo.toml"). 중복을 합치고 3개까지. */
+  what?: string[];
+  /** what에 다 담지 못한 것이 더 있는지. */
+  more?: boolean;
 }
 
 /** 언어 ID → 그 언어 파일을 찾는 glob 목록. 기본 내장 언어와 설치된 확장의 언어 정의를 합쳐 만든다. */
@@ -108,11 +113,16 @@ export function combineGlobs(globs: string[]): string[] {
   return [...(simple.length > 1 ? [`{${simple.join(',')}}`] : simple), ...complex];
 }
 
-/** 확장 하나에 대한 "필요 없음" 사유. 같은 패턴은 합치고 3개까지만 적는다. */
-export function reasonFor(checks: Check[]): string {
+/** 사유에 적을 "없는 것들". 같은 패턴은 합치고 3개까지만. */
+export function whatOf(checks: Check[]): { what: string[]; more: boolean } {
   const names = [...new Set(checks.map((k) => k.what.replace(/^(\*\*\/|\*\/)+/, '')))];
-  const shown = names.slice(0, 3).join(', ') + (names.length > 3 ? ', …' : '');
-  return `No ${shown} in this folder`;
+  return { what: names.slice(0, 3), more: names.length > 3 };
+}
+
+/** 확장 하나에 대한 "필요 없음" 사유(영어). */
+export function reasonFor(checks: Check[]): string {
+  const { what, more } = whatOf(checks);
+  return `No ${what.join(', ')}${more ? ', …' : ''} in this folder`;
 }
 
 /** 모든 조건이 비어 있는 후보만 추천한다. 같은 glob은 한 번만 확인한다. */
@@ -124,9 +134,9 @@ export async function evaluateSuggestions(candidates: Candidate[], exists: (glob
     return p;
   };
   const results = await Promise.all(
-    candidates.map(async (c) => {
+    candidates.map(async (c): Promise<Suggestion | undefined> => {
       const found = await Promise.all(c.checks.flatMap((k) => k.globs.map(check)));
-      return found.some(Boolean) ? undefined : { id: c.id, reason: reasonFor(c.checks) };
+      return found.some(Boolean) ? undefined : { id: c.id, reason: reasonFor(c.checks), ...whatOf(c.checks) };
     }),
   );
   return results.filter((s): s is Suggestion => !!s);

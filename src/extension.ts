@@ -84,6 +84,7 @@ export function activate(context: vscode.ExtensionContext): LoadoutController | 
     return { recommended: [...r.recommended], unwanted: [...r.unwanted], learned: c.learnedList().map((x) => x.id), signature: await c.folderSignature() };
   });
   reg('_extensionLoadout.setViewOptions', (opts: object) => c.setViewOptions(opts));
+  reg('_extensionLoadout.l10n', () => ({ language: vscode.env.language, sample: t('Apply and Restart') }));
   reg('_extensionLoadout.dashboard', async (message?: object) => {
     const d = Dashboard.show(c);
     if (message) await d.handle(message as Parameters<Dashboard['handle']>[0]);

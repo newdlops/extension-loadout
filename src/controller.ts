@@ -3,7 +3,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { activationText } from './catalog';
 import { dependentsOf, missingDependencies, packMembers } from './deps';
 import { LearnedEntry, LearnedSuggestion, MARKER_GLOB, learnedSuggestions, recordDecision, signatureOf } from './learning';
 import { RepoRecommendations, mergeRecommendations, parseRecommendations } from './repoRecs';
@@ -31,6 +30,7 @@ import { ExtMemory, formatBytes, measureExtensions } from './processes';
 import { cancelOnQuit, ensureQuitHelper, logPath, pendingOnQuit, restartNow, scheduleOnQuit } from './restart';
 import { readItems } from './stateDb';
 import { computeSuggestions } from './suggestions';
+import { pressureText, startsText } from './text';
 import { LoadoutTree, Node, summaryOf } from './tree';
 
 const t = vscode.l10n.t;
@@ -68,7 +68,7 @@ export class LoadoutController implements vscode.Disposable {
   readonly onDidChange = this.changed.event;
   private memory?: { list: ExtMemory[]; at: number };
   private measuring?: Promise<ExtMemory[]>;
-  private pressure: Pressure = { level: 'normal', detail: '' };
+  private pressure: Pressure = { level: 'normal', source: 'kernel', detail: '' };
   /** 이번 세션에서 알림을 띄운 가장 높은 압박 수준. */
   private notifiedLevel: PressureLevel = 'normal';
   private pressureTimer?: NodeJS.Timeout;
@@ -199,7 +199,7 @@ export class LoadoutController implements vscode.Disposable {
     const name = top ? this.displayName(top.id) : undefined;
     return {
       text: `$(pulse) ${this.pressure.level === 'critical' ? t('Memory critical') : t('Memory tight')}${top ? ` · ${name} ${formatBytes(top.bytes)}` : ''}`,
-      tooltip: `${this.pressure.detail}\n${t('Click to see which extensions use memory in this window.')}`,
+      tooltip: `${pressureText(this.pressure)}\n${t('Click to see which extensions use memory in this window.')}`,
       command: 'extensionLoadout.showMemory',
       warning: true,
     };
@@ -251,7 +251,7 @@ export class LoadoutController implements vscode.Disposable {
     this.pressureTimer = undefined;
     const cfg = vscode.workspace.getConfiguration('extensionLoadout.memoryWatch');
     if (!cfg.get<boolean>('enabled', true)) {
-      this.pressure = { level: 'normal', detail: '' };
+      this.pressure = { level: 'normal', source: 'kernel', detail: '' };
       this.updateStatusBar();
       return;
     }
@@ -414,7 +414,7 @@ export class LoadoutController implements vscode.Disposable {
         const all = t('Turn Them Off Too');
         const only = t('Only the Ones I Chose');
         const go = await vscode.window.showWarningMessage(
-          t('{0} needed by other extensions that are on here.', turningOff.map(name).join(', ')),
+          t('{0} is needed by other extensions that are on here.', turningOff.map(name).join(', ')),
           { modal: true, detail: t('{0} cannot work without it. Turn them off too?', dependents.map(name).join(', ')) },
           all,
           only,
@@ -472,7 +472,7 @@ export class LoadoutController implements vscode.Disposable {
         description: r.id,
         detail:
           (r.override === 'on' ? t('ON in this folder') : r.override === 'off' ? t('OFF in this folder') : t('Same as global')) +
-          ` · ${r.globallyEnabled ? t('on globally') : t('off globally')} · ${activationText(r.activation)}`,
+          ` · ${r.globallyEnabled ? t('on globally') : t('off globally')} · ${startsText(r.activation, r.packMembers.length)}`,
         picked: r.desiredOn,
       }));
     const chosen = await vscode.window.showQuickPick(items, {

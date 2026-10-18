@@ -8,13 +8,14 @@
 // 항목 아이콘은 각 확장의 아이콘이고, 설명에는 메모리, 언제 켜지는지(⚡ always 등), 지금 실행 중인지를 짧게 적는다.
 // 확장 팩은 펼치면 팩에 든 확장이 보인다. 설치 목록은 화면이 실제로 그려질 때만 읽는다.
 import * as vscode from 'vscode';
-import { Activation, InstalledExtension, activationText } from './catalog';
+import { Activation, InstalledExtension } from './catalog';
 import type { ViewOptions } from './controller';
 import type { LearnedSuggestion } from './learning';
 import { ExtensionRow, LoadoutSnapshot } from './model';
 import { ExtMemory, formatBytes } from './processes';
 import type { Suggestion } from './recommend';
 import type { RepoRecommendations } from './repoRecs';
+import { learnedText, localizeError, startsText, suggestionText } from './text';
 
 const t = vscode.l10n.t;
 
@@ -303,12 +304,12 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
       out.push({
         kind: 'notice',
         label: t('Loadout file has a problem'),
-        detail: err,
+        detail: localizeError(err),
         icon: new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground')),
         command: { command: 'extensionLoadout.openConfig', title: t('Open') },
       });
     }
-    for (const c of snap.conflicts) out.push({ kind: 'notice', label: t('Folders disagree'), detail: c, icon: new vscode.ThemeIcon('warning', new vscode.ThemeColor('problemsWarningIcon.foreground')) });
+    for (const c of snap.conflicts) out.push({ kind: 'notice', label: t('Folders disagree'), detail: localizeError(c), icon: new vscode.ThemeIcon('warning', new vscode.ThemeColor('problemsWarningIcon.foreground')) });
     if (snap.pending) {
       out.push({
         kind: 'notice',
@@ -418,7 +419,7 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     if (node.suggestion || node.learned) {
       const kind = node.suggestion ? 'suggest' : 'learned';
       item.id = `${kind}:${r.id}`;
-      item.description = (node.suggestion?.reason ?? node.learned!.reason).replace(/ in this folder$/, '');
+      item.description = node.suggestion ? suggestionText(node.suggestion) : learnedText(node.learned!);
       item.contextValue = `ext:${kind}:${r.locked ? 'locked' : 'switchable'}`;
       item.tooltip = this.tooltip(r, false, { suggestion: node.suggestion, learned: node.learned, mem });
       return item;
@@ -433,7 +434,7 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     if (mem && mem.bytes > 0) parts.push(formatBytes(mem.bytes));
     if (mismatch) parts.push(r.desiredOn ? t('not running yet') : t('still running'));
     else if (r.active) parts.push(t('● running'));
-    parts.push(r.packMembers.length ? t('pack · {0}', r.packMembers.length) : activationText(r.activation));
+    parts.push(startsText(r.activation, r.packMembers.length));
     if (r.override) parts.push(r.globallyEnabled ? t('elsewhere: on') : t('elsewhere: off'));
     if (this.repo.recommended.has(r.id)) parts.push(t('★ repo'));
     if (r.via) parts.push(t('via {0}', r.via));
@@ -463,8 +464,8 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     md.supportThemeIcons = true;
     md.appendMarkdown(`**${r.displayName}**  \n\`${r.id}\` · v${r.version} · ${r.publisher}\n\n`);
     if (r.description) md.appendMarkdown(`${r.description}\n\n`);
-    if (extra.suggestion) md.appendMarkdown(`$(lightbulb) **${t('Safe to turn off here.')}** ${extra.suggestion.reason}.\n\n`);
-    if (extra.learned) md.appendMarkdown(`$(history) **${t('Based on your choices.')}** ${extra.learned.reason}.\n\n`);
+    if (extra.suggestion) md.appendMarkdown(`$(lightbulb) **${t('Safe to turn off here.')}** ${suggestionText(extra.suggestion)}.\n\n`);
+    if (extra.learned) md.appendMarkdown(`$(history) **${t('Based on your choices.')}** ${learnedText(extra.learned)}.\n\n`);
     const here = r.override === 'on' ? t('ON (folder setting)') : r.override === 'off' ? t('OFF (folder setting)') : t('same as global');
     md.appendMarkdown(`**${t('This folder')}:** ${here}  \n`);
     md.appendMarkdown(`**${t('Global setting')}:** ${r.globallyEnabled ? t('on') : t('off')}  \n`);

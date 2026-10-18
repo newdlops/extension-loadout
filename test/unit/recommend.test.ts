@@ -53,8 +53,8 @@ test('evaluateSuggestions suggests only when every trigger is absent, and checks
   const present = new Set(['{**/*.py,**/*.pyi}']);
   const list = await evaluateSuggestions(candidates, async (g) => (asked.push(g), present.has(g)));
   assert.deepEqual(list, [
-    { id: 'a', reason: 'No rust files (*.rs), Cargo.toml in this folder' },
-    { id: 'c', reason: 'No rust files (*.rs) in this folder' },
+    { id: 'a', reason: 'No rust files (*.rs), Cargo.toml in this folder', what: ['rust files (*.rs)', 'Cargo.toml'], more: false },
+    { id: 'c', reason: 'No rust files (*.rs) in this folder', what: ['rust files (*.rs)'], more: false },
   ]);
   assert.equal(asked.filter((g) => g === '**/*.rs').length, 1);
 });

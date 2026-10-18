@@ -7,6 +7,7 @@ import type { LoadoutController } from './controller';
 import { buildDashRows } from './dashboardModel';
 import { Override } from './loadout';
 import { formatBytes } from './processes';
+import { learnedText, localizeError, pressureText, startsText, suggestionText } from './text';
 
 const t = vscode.l10n.t;
 
@@ -114,6 +115,7 @@ export class Dashboard implements vscode.Disposable {
       learned: this.c.learnedList(),
       recommended: this.c.repoRecommendations().recommended,
       iconUri: (file) => this.panel.webview.asWebviewUri(vscode.Uri.file(file)).toString(),
+      text: { starts: startsText, suggestion: suggestionText, learned: learnedText },
     });
     const totalMemory = this.c.memoryList().reduce((a, m) => a + m.bytes, 0);
     return {
@@ -122,10 +124,10 @@ export class Dashboard implements vscode.Disposable {
       pending: snap.pending,
       scheduled: this.c.scheduledHere(),
       canUndo: this.c.history().length > 0,
-      errors: snap.configErrors,
-      conflicts: snap.conflicts,
+      errors: snap.configErrors.map(localizeError),
+      conflicts: snap.conflicts.map(localizeError),
       missing: snap.missing,
-      pressure: pressure.level === 'normal' ? undefined : { level: pressure.level, detail: pressure.detail },
+      pressure: pressure.level === 'normal' ? undefined : { level: pressure.level, detail: pressureText(pressure) },
       totalMemory: totalMemory ? formatBytes(totalMemory) : '',
     };
   }
