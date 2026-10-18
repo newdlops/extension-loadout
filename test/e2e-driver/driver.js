@@ -26,6 +26,7 @@ exports.activate = async () => {
       await vscode.commands.executeCommand('extensionLoadout.applyAndRestart');
     } else if (phase === '2') {
       await vscode.commands.executeCommand('extensionLoadout.followGlobal', ON);
+      log({ phase, configAfterFirstFollowGlobal: JSON.parse(fs.readFileSync(config, 'utf8')) });
       await vscode.commands.executeCommand('extensionLoadout.followGlobal', OFF);
       log({ phase, configAfterFollowGlobal: JSON.parse(fs.readFileSync(config, 'utf8')) });
       setPhase('3');

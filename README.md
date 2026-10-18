@@ -40,6 +40,7 @@ The helper only touches the two keys VS Code uses for workspace extension enable
 
 ## Limits
 
+- Needs VS Code 1.101 or newer (it uses the SQLite module built into VS Code's Node.js).
 - Multi-root workspaces use the first folder's `.vscode/extension-loadout.json`.
 - Only extensions in your default profile's extensions folder are listed. Built-in extensions are not listed.
 - Restart has been tested on macOS. On Windows and Linux VS Code is relaunched from its executable.
@@ -51,7 +52,8 @@ The helper only touches the two keys VS Code uses for workspace extension enable
 ```sh
 npm install
 npm run test:unit   # pure logic, SQLite storage, restart helper
-npm run test:e2e    # drives a real, isolated VS Code through apply → restart → revert
+npm run test:e2e    # drives a real, isolated VS Code through apply → restart → revert,
+                    # once in development mode and once installed from the .vsix with the real `open -n -a` relaunch
 ```
 
 The end-to-end test uses its own `--user-data-dir` and `--extensions-dir` under `.vscode-test/`, so your own VS Code setup is never touched.

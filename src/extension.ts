@@ -3,14 +3,20 @@ import * as vscode from 'vscode';
 import { Override, normalizeId, overridesFromSelection, storedValuesFor } from './loadout';
 import { LoadoutModel, LoadoutSnapshot } from './model';
 import { logPath, restartWith } from './restart';
+import { sqliteAvailable } from './stateDb';
 import { LoadoutTree, Node } from './tree';
 
 export function activate(context: vscode.ExtensionContext): void {
+  if (!sqliteAvailable()) {
+    vscode.window.showErrorMessage('Extension Loadout needs VS Code 1.101 or newer.');
+    return;
+  }
   const model = new LoadoutModel(context);
   const tree = new LoadoutTree();
+  const output = vscode.window.createOutputChannel('Extension Loadout', { log: true });
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = 'extensionLoadout.applyAndRestart';
-  context.subscriptions.push(status, vscode.window.createTreeView('extensionLoadout.extensions', { treeDataProvider: tree, showCollapseAll: true }));
+  context.subscriptions.push(output, status, vscode.window.createTreeView('extensionLoadout.extensions', { treeDataProvider: tree, showCollapseAll: true }));
 
   let snap: LoadoutSnapshot | undefined;
   const refresh = (): LoadoutSnapshot | undefined => {
@@ -18,6 +24,7 @@ export function activate(context: vscode.ExtensionContext): void {
       snap = model.workspaceDbPath ? model.snapshot() : undefined;
     } catch (e) {
       snap = undefined;
+      output.error('Could not read the extension state', e as Error);
       vscode.window.showErrorMessage(`Extension Loadout could not read the extension state: ${(e as Error).message}`);
     }
     tree.refresh(snap);
@@ -53,8 +60,10 @@ export function activate(context: vscode.ExtensionContext): void {
     const uuid = new Map(s.rows.map((r) => [r.id, r.uuid]));
     const items = storedValuesFor(s.overrides, (id) => uuid.get(id));
     try {
+      output.info(`Applying loadout to ${model.workspaceDbPath}: ${JSON.stringify(items)}`);
       await restartWith(context, model.workspaceDbPath!, items);
     } catch (e) {
+      output.error('Restart failed', e as Error);
       vscode.window.showErrorMessage(`Could not restart VS Code: ${(e as Error).message} (log: ${logPath()})`);
     }
   };

@@ -44,18 +44,39 @@ globalDb.close();
 
 fs.writeFileSync(path.join(ws, '.vscode', 'extension-loadout.json'), JSON.stringify({ enable: [OFF], disable: [ON] }, null, 2));
 
-const args = [
+// E2E_RELAUNCH=open: 실제 macOS 경로와 같게 확장을 vsix로 설치하고, open -n -a로 폴더 인자 없이 다시 띄워
+// VS Code의 창 복원까지 확인한다. 개발 모드(--extensionDevelopmentPath) 창은 복원되지 않기 때문이다.
+const OPEN_MODE = process.env.E2E_RELAUNCH === 'open';
+if (OPEN_MODE) {
+  const pack = (cwd, out, extra = []) => {
+    execFileSync(path.join(ROOT, 'node_modules', '.bin', 'vsce'), ['package', '--no-dependencies', ...extra, '-o', out], { cwd, stdio: 'ignore' });
+    execFileSync(CLI, ['--user-data-dir', ud, '--extensions-dir', exts, '--install-extension', out], { stdio: 'ignore' });
+  };
+  pack(ROOT, path.join(DIR, 'extension-loadout.vsix'));
+  pack(path.join(ROOT, 'test', 'e2e-driver'), path.join(DIR, 'e2e-driver.vsix'), ['--allow-missing-repository', '--skip-license']);
+}
+const base = [
   '--user-data-dir', ud,
   '--extensions-dir', exts,
-  `--extensionDevelopmentPath=${ROOT}`,
-  `--extensionDevelopmentPath=${path.join(ROOT, 'test', 'e2e-driver')}`,
+  ...(OPEN_MODE
+    ? []
+    : [`--extensionDevelopmentPath=${ROOT}`, `--extensionDevelopmentPath=${path.join(ROOT, 'test', 'e2e-driver')}`]),
   '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust',
-  ws,
 ];
+const args = [...base, ws];
+// open으로 띄운 앱은 호출한 쪽의 환경 변수를 물려받지 않으므로 --env로 넘긴다.
+const relaunchFile = path.join(DIR, 'relaunch.json');
+const relaunch = OPEN_MODE
+  ? {
+      command: 'open',
+      args: ['-n', '-a', APP, '--env', `EXTENSION_LOADOUT_E2E_DIR=${DIR}`, '--env', `EXTENSION_LOADOUT_RELAUNCH=@${relaunchFile}`, '--args', ...base],
+    }
+  : { command: CODE, args };
+fs.writeFileSync(relaunchFile, JSON.stringify(relaunch));
 const env = {
   ...process.env,
   EXTENSION_LOADOUT_E2E_DIR: DIR,
-  EXTENSION_LOADOUT_RELAUNCH: JSON.stringify({ command: CODE, args }),
+  EXTENSION_LOADOUT_RELAUNCH: `@${relaunchFile}`,
 };
 delete env.ELECTRON_RUN_AS_NODE;
 spawn(CODE, args, { env, detached: true, stdio: 'ignore' }).unref();
@@ -93,7 +114,7 @@ const checks = [
 
 let failed = false;
 for (const [name, ok] of checks) {
-  console.log(`${ok ? '✔' : '✖'} ${name}`);
+  console.log(`${ok ? '✔' : '✖'} ${OPEN_MODE ? '[open] ' : ''}${name}`);
   failed ||= !ok;
 }
 if (failed) {
