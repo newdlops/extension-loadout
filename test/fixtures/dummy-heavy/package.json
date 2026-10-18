@@ -1,0 +1,1 @@
+{"name":"dummy-heavy","displayName":"Loadout Test Dummy (heavy process)","publisher":"loadouttest","version":"0.0.1","license":"MIT","engines":{"vscode":"^1.85.0"},"activationEvents":["onStartupFinished"],"main":"./index.js","repository":{"type":"git","url":"https://example.invalid/dummy"}}

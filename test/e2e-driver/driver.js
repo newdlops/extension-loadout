@@ -61,6 +61,11 @@ exports.activate = async (context) => {
     log({ phase, on: running(ON), off: running(OFF), config: readConfig() });
     if (phase === '1') {
       log({ phase, suggestions: await run('_extensionLoadout.suggestions') });
+      // 시험용 확장이 자식 프로세스를 띄울 시간을 준다.
+      await new Promise((r) => setTimeout(r, 3000));
+      const memory = await run('_extensionLoadout.memory');
+      log({ phase, heavy: memory.find((m) => m.id === 'loadouttest.dummy-heavy') ?? null });
+      log({ phase, pressure: (await run('_extensionLoadout.pressure')).level });
       setPhase('2');
       await run('extensionLoadout.applyAndRestart');
     } else if (phase === '2') {

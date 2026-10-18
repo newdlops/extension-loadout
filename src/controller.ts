@@ -20,6 +20,8 @@ import {
 import { ExtensionRow, LoadoutModel, LoadoutSnapshot, LoadoutStatus } from './model';
 import type { PlanTarget } from './plan';
 import type { Suggestion } from './recommend';
+import { Pressure, PressureLevel, rank, readPressure } from './pressure';
+import { ExtMemory, formatBytes, measureExtensions } from './processes';
 import { cancelOnQuit, ensureQuitHelper, logPath, pendingOnQuit, restartNow, scheduleOnQuit } from './restart';
 import { readItems } from './stateDb';
 import { computeSuggestions } from './suggestions';
@@ -41,6 +43,12 @@ export class LoadoutController implements vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<void>();
   /** 상태가 바뀔 때(대시보드 갱신용). */
   readonly onDidChange = this.changed.event;
+  private memory?: { list: ExtMemory[]; at: number };
+  private measuring?: Promise<ExtMemory[]>;
+  private pressure: Pressure = { level: 'normal', detail: '' };
+  /** 이번 세션에서 알림을 띄운 가장 높은 압박 수준. */
+  private notifiedLevel: PressureLevel = 'normal';
+  private pressureTimer?: NodeJS.Timeout;
 
   constructor(readonly context: vscode.ExtensionContext) {
     this.model = new LoadoutModel(context);
@@ -73,14 +81,22 @@ export class LoadoutController implements vscode.Disposable {
       this.tree.onDidLoad((snap) => {
         for (const v of this.views) v.description = snap ? summaryOf(snap) : undefined;
         if (snap && !this.suggestions) void this.findSuggestions(snap);
+        // 메모리는 화면이 그려질 때, 마지막으로 잰 지 1분이 지났을 때만 다시 잰다.
+        if (snap && (!this.memory || Date.now() - this.memory.at > 60_000)) void this.measureMemory();
         this.changed.fire();
       }),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('extensionLoadout.memoryWatch')) this.startPressureWatch();
+        if (e.affectsConfiguration('extensionLoadout.heavyThresholdMB')) this.tree.invalidate();
+      }),
+      { dispose: () => this.pressureTimer && clearInterval(this.pressureTimer) },
       this.tree.onDidChangeSelection((count) => {
         void vscode.commands.executeCommand('setContext', 'extensionLoadout.hasSelection', count > 0);
         for (const v of this.views) v.message = count ? t('{0} selected. Click "Turn Off Selected" (⊘) at the top to turn them off in this folder.', count) : undefined;
       }),
     );
     this.watchConfigFiles();
+    this.startPressureWatch();
     try {
       ensureQuitHelper(context);
     } catch (e) {
@@ -144,8 +160,121 @@ export class LoadoutController implements vscode.Disposable {
     return !!db && pendingOnQuit(this.context).some((p) => samePath(p.dbPath, db));
   }
 
-  protected statusBarExtra(): { text: string; tooltip: string; command: string; warning: boolean } | undefined {
-    return undefined;
+  private statusBarExtra(): { text: string; tooltip: string; command: string; warning: boolean } | undefined {
+    if (this.pressure.level === 'normal') return undefined;
+    const top = this.memory?.list.find((m) => m.bytes > 0);
+    const name = top ? this.displayName(top.id) : undefined;
+    return {
+      text: `$(pulse) ${this.pressure.level === 'critical' ? t('Memory critical') : t('Memory tight')}${top ? ` · ${name} ${formatBytes(top.bytes)}` : ''}`,
+      tooltip: `${this.pressure.detail}\n${t('Click to see which extensions use memory in this window.')}`,
+      command: 'extensionLoadout.showMemory',
+      warning: true,
+    };
+  }
+
+  private names = new Map<string, string>();
+  displayName(id: string): string {
+    return this.names.get(id) ?? id;
+  }
+
+  // -----------------------------------------------------------------------------------------
+  // 메모리
+
+  /** 이 창과 모든 창에서 확장이 띄운 프로세스의 메모리를 잰다(동시에 여러 번 부르면 한 번만 잰다). */
+  measureMemory(): Promise<ExtMemory[]> {
+    if (this.measuring) return this.measuring;
+    this.measuring = (async () => {
+      const started = Date.now();
+      try {
+        const exts = [...(await this.model.installed()), ...this.model.builtins()];
+        for (const e of exts) this.names.set(e.id, e.displayName);
+        const list = await measureExtensions(
+          exts.map((e) => ({ id: e.id, location: e.location })),
+          process.pid,
+          process.ppid,
+        );
+        this.memory = { list, at: Date.now() };
+        this.tree.setMemory(list, exts.filter((e) => e.builtin));
+        this.updateStatusBar();
+        this.changed.fire();
+        this.output.info(`Measured extension memory in ${Date.now() - started} ms: ${list.slice(0, 5).map((m) => `${m.id} ${formatBytes(m.bytes)}`).join(', ')}`);
+        return list;
+      } catch (e) {
+        this.output.warn(`Could not measure extension memory: ${(e as Error).message}`);
+        return [];
+      } finally {
+        this.measuring = undefined;
+      }
+    })();
+    return this.measuring;
+  }
+
+  memoryList(): ExtMemory[] {
+    return this.memory?.list ?? [];
+  }
+
+  private startPressureWatch(): void {
+    if (this.pressureTimer) clearInterval(this.pressureTimer);
+    this.pressureTimer = undefined;
+    const cfg = vscode.workspace.getConfiguration('extensionLoadout.memoryWatch');
+    if (!cfg.get<boolean>('enabled', true)) {
+      this.pressure = { level: 'normal', detail: '' };
+      this.updateStatusBar();
+      return;
+    }
+    const check = () => void this.checkPressure();
+    this.pressureTimer = setInterval(check, 60_000);
+    setTimeout(check, 5_000);
+  }
+
+  async checkPressure(): Promise<Pressure> {
+    try {
+      const p = await readPressure();
+      const rose = rank(p.level) > rank(this.pressure.level);
+      this.pressure = p;
+      if (rose) await this.measureMemory();
+      this.updateStatusBar();
+      const notify = vscode.workspace.getConfiguration('extensionLoadout.memoryWatch').get<boolean>('notify', true);
+      if (notify && rank(p.level) > rank(this.notifiedLevel)) {
+        this.notifiedLevel = p.level;
+        const top = this.memory?.list.find((m) => m.bytes > 0);
+        const msg = top
+          ? t('Memory is tight. In this window, {0} uses {1}.', this.displayName(top.id), formatBytes(top.bytes))
+          : t('Memory is tight.');
+        void vscode.window.showWarningMessage(msg, t('Show Memory'), t('Restart Extension Host'), t("Don't Show Again")).then((go) => {
+          if (go === t('Show Memory')) void this.showMemory();
+          if (go === t('Restart Extension Host')) void this.restartExtensionHost();
+          if (go === t("Don't Show Again")) void vscode.workspace.getConfiguration('extensionLoadout.memoryWatch').update('notify', false, vscode.ConfigurationTarget.Global);
+        });
+      }
+    } catch (e) {
+      this.output.warn(`Could not read memory pressure: ${(e as Error).message}`);
+    }
+    return this.pressure;
+  }
+
+  currentPressure(): Pressure {
+    return this.pressure;
+  }
+
+  async showMemory(): Promise<void> {
+    await vscode.commands.executeCommand('extensionLoadout.extensions.focus');
+    await this.measureMemory();
+  }
+
+  async restartExtensionHost(confirm = true): Promise<void> {
+    if (confirm) {
+      const go = await vscode.window.showWarningMessage(
+        t('Restart the extension host of this window?'),
+        {
+          modal: true,
+          detail: t('All extensions and language servers in this window restart and give their memory back. Open editors and unsaved changes stay. Running debug sessions and extension state such as a REPL are lost.'),
+        },
+        t('Restart Extension Host'),
+      );
+      if (go !== t('Restart Extension Host')) return;
+    }
+    await vscode.commands.executeCommand('workbench.action.restartExtensionHost');
   }
 
   updateStatusBar(st = this.lastStatus): void {

@@ -176,6 +176,24 @@
         "title": "Reset Folder to Global Settings",
         "category": "Extension Loadout",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "extensionLoadout.showMemory",
+        "title": "Show Extension Memory",
+        "category": "Extension Loadout",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "extensionLoadout.measureMemory",
+        "title": "Measure Memory Again",
+        "category": "Extension Loadout",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "extensionLoadout.restartExtensionHost",
+        "title": "Restart Extension Host (Free Extension Memory)",
+        "category": "Extension Loadout",
+        "icon": "$(debug-restart-frame)"
       }
     ],
     "menus": {
@@ -239,6 +257,11 @@
           "command": "extensionLoadout.resetToGlobal",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
           "group": "2_history@2"
+        },
+        {
+          "command": "extensionLoadout.restartExtensionHost",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer)",
+          "group": "3_memory@1"
         }
       ],
       "view/item/context": [
@@ -261,6 +284,16 @@
           "command": "extensionLoadout.disableSuggested",
           "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem == group:suggest",
           "group": "inline@1"
+        },
+        {
+          "command": "extensionLoadout.measureMemory",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem == group:memory",
+          "group": "inline@1"
+        },
+        {
+          "command": "extensionLoadout.restartExtensionHost",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem == group:memory",
+          "group": "inline@2"
         }
       ],
       "commandPalette": [
@@ -323,6 +356,10 @@
         {
           "command": "extensionLoadout.resetToGlobal",
           "when": "workbenchState != empty"
+        },
+        {
+          "command": "extensionLoadout.measureMemory",
+          "when": "false"
         }
       ]
     },
@@ -334,7 +371,28 @@
         ],
         "url": "./schemas/extension-loadout.schema.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Extension Loadout",
+      "properties": {
+        "extensionLoadout.memoryWatch.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check the system memory pressure every minute while Extension Loadout is active, and show which extensions use memory in this window when it gets tight."
+        },
+        "extensionLoadout.memoryWatch.notify": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a notification (once per session) when memory gets tight. The status bar indicator is shown either way."
+        },
+        "extensionLoadout.heavyThresholdMB": {
+          "type": "number",
+          "default": 500,
+          "minimum": 50,
+          "description": "Extensions whose processes use at least this many MB in this window are highlighted as heavy."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

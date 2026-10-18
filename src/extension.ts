@@ -43,7 +43,13 @@ export function activate(context: vscode.ExtensionContext): LoadoutController | 
   reg('extensionLoadout.enableHere', (n?: unknown, many?: unknown) => set(n, many, 'on'));
   reg('extensionLoadout.disableHere', (n?: unknown, many?: unknown) => set(n, many, 'off'));
   reg('extensionLoadout.followGlobal', (n?: unknown, many?: unknown) => set(n, many, undefined));
-  reg('extensionLoadout.refresh', () => c.refresh());
+  reg('extensionLoadout.refresh', async () => {
+    await c.refresh();
+    void c.measureMemory();
+  });
+  reg('extensionLoadout.showMemory', () => c.showMemory());
+  reg('extensionLoadout.measureMemory', () => c.measureMemory());
+  reg('extensionLoadout.restartExtensionHost', () => c.restartExtensionHost());
   reg('extensionLoadout.openConfig', async () => {
     const st = await c.requireWorkspace();
     if (!st) return;
@@ -54,6 +60,8 @@ export function activate(context: vscode.ExtensionContext): LoadoutController | 
 
   // 테스트용 명령(밑줄로 시작해 명령 팔레트에 나오지 않는다).
   reg('_extensionLoadout.suggestions', async () => (await c.currentSuggestions()).map((x) => x.id));
+  reg('_extensionLoadout.memory', async () => (await c.measureMemory()).map((m) => ({ id: m.id, bytes: m.bytes, pids: m.pids.length, all: m.allWindowsBytes })));
+  reg('_extensionLoadout.pressure', () => c.checkPressure());
   reg('_extensionLoadout.select', (ids: string[]) => c.tree.select(ids));
   reg('_extensionLoadout.applyOnQuit', () => c.applyOnQuit());
   reg('_extensionLoadout.undo', () => c.undo(false));

@@ -5,18 +5,27 @@
 // 항목 아이콘은 각 확장의 아이콘이고, 설명에는 언제 켜지는지(⚡ always 등)와 지금 실행 중인지를 짧게 적는다.
 // 설치 목록은 화면이 실제로 그려질 때만 읽는다.
 import * as vscode from 'vscode';
-import { Activation, activationText } from './catalog';
+import { Activation, InstalledExtension, activationText } from './catalog';
 import { ExtensionRow, LoadoutSnapshot } from './model';
+import { ExtMemory, formatBytes } from './processes';
 import type { Suggestion } from './recommend';
 
-type GroupKind = 'suggest' | 'on' | 'off' | 'global';
+const t = vscode.l10n.t;
+
+type GroupKind = 'memory' | 'suggest' | 'on' | 'off' | 'global';
 
 export type Node =
   | { kind: 'group'; group: GroupKind; rows: ExtensionRow[] }
-  | { kind: 'ext'; row: ExtensionRow; pending: boolean; suggestion?: Suggestion }
+  | { kind: 'ext'; row: ExtensionRow; pending: boolean; suggestion?: Suggestion; inMemoryGroup?: boolean }
   | { kind: 'notice'; label: string; detail?: string; icon: vscode.ThemeIcon; command?: vscode.Command };
 
 const GROUPS: Record<GroupKind, { label: string; icon: vscode.ThemeIcon; tooltip: string }> = {
+  memory: {
+    label: 'Memory in this window',
+    icon: new vscode.ThemeIcon('pulse', new vscode.ThemeColor('charts.orange')),
+    tooltip:
+      'Memory used by processes that extensions started in this window (language servers, daemons), including memory macOS has compressed. Memory inside the shared extension host cannot be split per extension.',
+  },
   suggest: {
     label: 'Not needed in this folder',
     icon: new vscode.ThemeIcon('lightbulb', new vscode.ThemeColor('charts.yellow')),
@@ -70,6 +79,8 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
   private loading?: Promise<LoadoutSnapshot | undefined>;
   private byId = new Map<string, ExtensionRow>();
   private suggestions: Suggestion[] = [];
+  private memory = new Map<string, ExtMemory>();
+  private builtins = new Map<string, InstalledExtension>();
   /** 체크박스로 고른 확장 ID. 켜짐/꺼짐 상태가 아니라 "한꺼번에 처리할 대상"이다. */
   private readonly checked = new Set<string>();
   private readonly selectionChanged = new vscode.EventEmitter<number>();
@@ -81,6 +92,36 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
   invalidate(): void {
     this.stale = true;
     this.changed.fire();
+  }
+
+  setMemory(list: ExtMemory[], builtins: InstalledExtension[]): void {
+    this.memory = new Map(list.map((m) => [m.id, m]));
+    this.builtins = new Map(builtins.map((b) => [b.id, b]));
+    this.decorationsChanged.fire(undefined);
+    this.changed.fire();
+  }
+
+  memoryOf(id: string): ExtMemory | undefined {
+    return this.memory.get(id);
+  }
+
+  private heavyThreshold(): number {
+    return vscode.workspace.getConfiguration('extensionLoadout').get<number>('heavyThresholdMB', 500) * 1024 ** 2;
+  }
+
+  /** 메모리 묶음에 보일 줄: 설치된 확장은 목록의 줄을, 내장 확장은 정보용 줄을 만든다. */
+  private memoryRows(snap: LoadoutSnapshot): ExtensionRow[] {
+    const out: ExtensionRow[] = [];
+    for (const m of [...this.memory.values()].filter((x) => x.bytes > 0).sort((a, b) => b.bytes - a.bytes)) {
+      const row = this.byId.get(m.id);
+      if (row) out.push(row);
+      else {
+        const b = this.builtins.get(m.id);
+        if (b) out.push({ ...b, globallyEnabled: true, desiredOn: true, running: true, active: true, locked: true });
+      }
+    }
+    void snap;
+    return out;
   }
 
   setSuggestions(list: Suggestion[]): void {
@@ -174,6 +215,8 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
       for (const id of snap.missing) {
         out.push({ kind: 'notice', label: id, detail: 'in the loadout but not installed', icon: new vscode.ThemeIcon('warning') });
       }
+      const heavy = this.memoryRows(snap);
+      if (heavy.length) out.push({ kind: 'group', group: 'memory', rows: heavy });
       const suggested = this.activeSuggestions();
       if (suggested.length) out.push({ kind: 'group', group: 'suggest', rows: suggested.map((s) => s.row) });
       out.push({ kind: 'group', group: 'on', rows: snap.rows.filter((r) => r.override === 'on') });
@@ -184,6 +227,7 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
       return out;
     }
     if (node.kind === 'group') {
+      if (node.group === 'memory') return node.rows.map((row): Node => ({ kind: 'ext', row, pending: snap.pending, inMemoryGroup: true }));
       if (node.group === 'suggest') {
         const list = this.activeSuggestions();
         const turnAllOff: Node = {
@@ -211,7 +255,12 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
       );
       item.id = `group:${node.group}`;
       item.iconPath = g.icon;
-      item.description = node.group === 'suggest' ? `${node.rows.length} · safe to turn off` : String(node.rows.length);
+      item.description =
+        node.group === 'suggest'
+          ? `${node.rows.length} · safe to turn off`
+          : node.group === 'memory'
+            ? formatBytes(node.rows.reduce((a, r) => a + (this.memory.get(r.id)?.bytes ?? 0), 0))
+            : String(node.rows.length);
       item.tooltip = g.tooltip;
       item.contextValue = `group:${node.group}`;
       const selectable = this.rowsOf(node).filter((r) => !r.locked);
@@ -239,6 +288,19 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
         tooltip: 'Select (then use "Turn Off Selected" at the top)',
       };
     }
+    const mem = this.memory.get(r.id);
+    if (node.inMemoryGroup && mem) {
+      item.id = `memory:${r.id}`;
+      const parts = [formatBytes(mem.bytes), mem.pids.length === 1 ? t('1 process') : t('{0} processes', mem.pids.length)];
+      if (mem.allWindowsBytes > mem.bytes) parts.push(t('all windows {0}', formatBytes(mem.allWindowsBytes)));
+      if (r.builtin) parts.push(t('built-in'));
+      item.description = parts.join(' · ');
+      item.contextValue = r.builtin ? 'ext:builtin:locked' : `ext:${r.override ?? (r.globallyEnabled ? 'global-on' : 'global-off')}:${r.locked ? 'locked' : 'switchable'}`;
+      item.tooltip = this.tooltip(r, false, undefined, mem);
+      item.checkboxState = undefined;
+      if (r.builtin) item.command = undefined;
+      return item;
+    }
     if (node.suggestion) {
       item.id = `suggest:${r.id}`;
       item.description = node.suggestion.reason.replace(/ in this folder$/, '');
@@ -253,13 +315,14 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     const state = r.override ?? (r.globallyEnabled ? 'global-on' : 'global-off');
     item.contextValue = `ext:${state}:${r.locked ? 'locked' : 'switchable'}`;
     const parts: string[] = [];
+    if (mem && mem.bytes > 0) parts.push(formatBytes(mem.bytes));
     if (mismatch) parts.push(r.desiredOn ? 'not running yet' : 'still running');
     else if (r.active) parts.push('● running');
     parts.push(activationText(r.activation));
     const elsewhere = elsewhereText(r);
     if (elsewhere) parts.push(elsewhere);
     item.description = parts.join(' · ');
-    item.tooltip = this.tooltip(r, mismatch);
+    item.tooltip = this.tooltip(r, mismatch, undefined, mem);
     return item;
   }
 
@@ -273,10 +336,12 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     if (r.override === 'on') return new vscode.FileDecoration('✓', 'ON in this folder', new vscode.ThemeColor('charts.green'));
     if (r.override === 'off') return new vscode.FileDecoration('✕', 'OFF in this folder', new vscode.ThemeColor('charts.red'));
     if (!r.globallyEnabled) return new vscode.FileDecoration(undefined, 'Off everywhere', new vscode.ThemeColor('disabledForeground'));
+    const mem = this.memory.get(r.id);
+    if (mem && mem.bytes >= this.heavyThreshold()) return new vscode.FileDecoration(undefined, `Heavy: ${formatBytes(mem.bytes)} in this window`, new vscode.ThemeColor('charts.orange'));
     return undefined;
   }
 
-  private tooltip(r: ExtensionRow, mismatch: boolean, suggestion?: Suggestion): vscode.MarkdownString {
+  private tooltip(r: ExtensionRow, mismatch: boolean, suggestion?: Suggestion, mem?: ExtMemory): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
     md.supportThemeIcons = true;
     md.appendMarkdown(`**${r.displayName}**  \n\`${r.id}\` · v${r.version} · ${r.publisher}\n\n`);
@@ -288,6 +353,15 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     md.appendMarkdown(`**Global setting:** ${r.globallyEnabled ? 'on' : 'off'}  \n`);
     md.appendMarkdown(`**Starts:** ${this.activationDetail(r.activation)}  \n`);
     md.appendMarkdown(`**Now:** ${r.active ? 'running' : r.running ? 'loaded, not started yet' : 'not loaded'}`);
+    if (mem && (mem.bytes || mem.allWindowsBytes)) {
+      md.appendMarkdown(`  \n**Memory:** ${formatBytes(mem.bytes)} in this window (${mem.pids.length} processes), ${formatBytes(mem.allWindowsBytes)} in all windows`);
+      const cmds = mem.commands.slice(0, 4).map((c) => '`' + c.replace(/`/g, "'").slice(0, 110) + (c.length > 110 ? '…' : '') + '`');
+      if (cmds.length) md.appendMarkdown(`\n\n${cmds.join('  \n')}`);
+    }
+    if (r.note) md.appendMarkdown(`  \n**Note:** ${r.note}`);
+    if (r.via) md.appendMarkdown(`  \n**Set by pattern:** \`${r.via}\``);
+    if (r.inheritedFrom?.length) md.appendMarkdown(`  \n**From folder:** ${r.inheritedFrom.join(', ')}`);
+    if (r.builtin) md.appendMarkdown('\n\nBuilt-in extension. Turn it off from the Extensions view if you really need to.');
     if (r.categories.length) md.appendMarkdown(`  \n**Categories:** ${r.categories.join(', ')}`);
     if (r.locked) md.appendMarkdown('\n\nExtension Loadout always stays on so you can change the loadout.');
     if (mismatch) {

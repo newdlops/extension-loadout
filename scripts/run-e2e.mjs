@@ -33,6 +33,8 @@ if (!CODE) {
   fs.mkdirSync(cachePath, { recursive: true });
   CODE = await downloadAndUnzipVSCode({ version: 'stable', cachePath });
 }
+// 최신 macOS VS Code는 실행 파일 이름이 Electron이 아니라 Code다(test-electron은 아직 Electron을 돌려준다).
+if (isMac && !fs.existsSync(CODE) && fs.existsSync(path.join(path.dirname(CODE), 'Code'))) CODE = path.join(path.dirname(CODE), 'Code');
 const CLI = resolveCliPathFromVSCodeExecutablePath(CODE);
 const APP = isMac ? path.resolve(CODE, '..', '..', '..') : undefined;
 const VSCE = path.join(ROOT, 'node_modules', '@vscode', 'vsce', 'vsce');
@@ -57,7 +59,7 @@ const pack = (cwd, out, extra = []) => {
   execFileSync(process.execPath, [VSCE, 'package', '--no-dependencies', ...extra, '-o', out], { cwd, stdio: 'ignore' });
   cli(['--user-data-dir', ud, '--extensions-dir', exts, '--install-extension', out]);
 };
-for (const name of ['dummy-on', 'dummy-off', 'dummy-rust']) {
+for (const name of ['dummy-on', 'dummy-off', 'dummy-rust', 'dummy-heavy']) {
   pack(path.join(ROOT, 'test', 'fixtures', name), path.join(DIR, `${name}.vsix`), ['--allow-missing-repository', '--skip-license']);
 }
 if (OPEN_MODE) {
@@ -147,6 +149,8 @@ const checks = [
   ['0단계: ws2 준비', lines.some((l) => l.ws2 === 'prepared')],
   ['1단계: 시작 상태(전역 ON 실행, 전역 OFF 미실행)', state('1')?.on === true && state('1')?.off === false],
   ['1단계: Rust 전용 확장만 "필요 없음"으로 추천', same(at('1', 'suggestions'), [RUST])],
+  ['1단계: 확장이 띄운 프로세스 메모리 측정(80MB 자식 프로세스)', (at('1', 'heavy')?.bytes ?? 0) >= 60 * 1024 ** 2 && at('1', 'heavy')?.pids >= 1],
+  ['1단계: 메모리 압박 수준 읽기', ['normal', 'warn', 'critical'].includes(at('1', 'pressure'))],
   ['2단계: loadout 적용 후 ON 확장 꺼짐', state('2')?.on === false],
   ['2단계: loadout 적용 후 전역 OFF 확장 켜짐', state('2')?.off === true],
   ['2단계: 선택한 확장 한꺼번에 끄기', same(at('2', 'configAfterSelectedOff'), { enable: [OFF], disable: [ON, RUST] })],
