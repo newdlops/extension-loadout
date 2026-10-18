@@ -27,7 +27,12 @@ if (OPEN_MODE && !isMac) throw new Error('E2E_RELAUNCH=open is macOS only');
 
 let CODE = process.env.VSCODE_EXECUTABLE;
 if (!CODE && isMac && fs.existsSync('/Applications/Visual Studio Code.app')) CODE = '/Applications/Visual Studio Code.app/Contents/MacOS/Code';
-if (!CODE) CODE = await downloadAndUnzipVSCode({ version: 'stable', cachePath: path.join(ROOT, '.vscode-test', 'vscode') });
+if (!CODE) {
+  // test-electron은 캐시 폴더의 상위 폴더가 없으면 만들지 못한다.
+  const cachePath = path.join(ROOT, '.vscode-test', 'vscode');
+  fs.mkdirSync(cachePath, { recursive: true });
+  CODE = await downloadAndUnzipVSCode({ version: 'stable', cachePath });
+}
 const CLI = resolveCliPathFromVSCodeExecutablePath(CODE);
 const APP = isMac ? path.resolve(CODE, '..', '..', '..') : undefined;
 const VSCE = path.join(ROOT, 'node_modules', '@vscode', 'vsce', 'vsce');
