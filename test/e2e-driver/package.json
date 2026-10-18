@@ -1,0 +1,1 @@
+{"name":"e2e-driver","publisher":"loadouttest","version":"0.0.1","engines":{"vscode":"^1.85.0"},"activationEvents":["onStartupFinished"],"main":"./driver.js"}

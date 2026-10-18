@@ -1,0 +1,192 @@
+{
+  "name": "extension-loadout",
+  "displayName": "Extension Loadout",
+  "description": "Equip each workspace with only the extensions it needs: turn extensions on or off per folder from one panel, saved in .vscode/extension-loadout.json.",
+  "version": "0.0.1",
+  "publisher": "newdlops",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/newdlops/extension-loadout.git"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "extensions",
+    "workspace",
+    "enable",
+    "disable",
+    "profile",
+    "memory"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "extensionLoadout",
+          "title": "Extension Loadout",
+          "icon": "media/loadout.svg"
+        }
+      ]
+    },
+    "views": {
+      "extensionLoadout": [
+        {
+          "id": "extensionLoadout.extensions",
+          "name": "This Workspace"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "extensionLoadout.extensions",
+        "contents": "Open a folder to choose which extensions run in it.",
+        "when": "workbenchState == empty"
+      }
+    ],
+    "commands": [
+      {
+        "command": "extensionLoadout.applyAndRestart",
+        "title": "Apply Loadout and Restart VS Code",
+        "category": "Extension Loadout",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "extensionLoadout.pick",
+        "title": "Choose Extensions for This Workspace...",
+        "category": "Extension Loadout",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "extensionLoadout.enableHere",
+        "title": "Turn On in This Workspace",
+        "category": "Extension Loadout",
+        "icon": "$(pass-filled)"
+      },
+      {
+        "command": "extensionLoadout.disableHere",
+        "title": "Turn Off in This Workspace",
+        "category": "Extension Loadout",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "extensionLoadout.followGlobal",
+        "title": "Follow Global Setting",
+        "category": "Extension Loadout",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "extensionLoadout.openConfig",
+        "title": "Open Loadout File",
+        "category": "Extension Loadout",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "extensionLoadout.refresh",
+        "title": "Refresh",
+        "category": "Extension Loadout",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "extensionLoadout.applyAndRestart",
+          "when": "view == extensionLoadout.extensions && extensionLoadout.pending",
+          "group": "navigation@1"
+        },
+        {
+          "command": "extensionLoadout.pick",
+          "when": "view == extensionLoadout.extensions",
+          "group": "navigation@2"
+        },
+        {
+          "command": "extensionLoadout.openConfig",
+          "when": "view == extensionLoadout.extensions",
+          "group": "navigation@3"
+        },
+        {
+          "command": "extensionLoadout.refresh",
+          "when": "view == extensionLoadout.extensions",
+          "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "extensionLoadout.enableHere",
+          "when": "view == extensionLoadout.extensions && viewItem =~ /^ext:(?!on)/ && viewItem =~ /:switchable$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "extensionLoadout.disableHere",
+          "when": "view == extensionLoadout.extensions && viewItem =~ /^ext:(?!off)/ && viewItem =~ /:switchable$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "extensionLoadout.followGlobal",
+          "when": "view == extensionLoadout.extensions && viewItem =~ /^ext:(on|off):/",
+          "group": "inline@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "extensionLoadout.enableHere",
+          "when": "false"
+        },
+        {
+          "command": "extensionLoadout.disableHere",
+          "when": "false"
+        },
+        {
+          "command": "extensionLoadout.followGlobal",
+          "when": "false"
+        },
+        {
+          "command": "extensionLoadout.applyAndRestart",
+          "when": "workbenchState != empty"
+        },
+        {
+          "command": "extensionLoadout.pick",
+          "when": "workbenchState != empty"
+        }
+      ]
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": ".vscode/extension-loadout.json",
+        "url": "./schemas/extension-loadout.schema.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "npm run check-types && node esbuild.js --production",
+    "check-types": "tsc --noEmit",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "tsc -p tsconfig.test.json && node --test --test-reporter=spec \"out/test/unit/*.test.js\"",
+    "test:e2e": "npm run compile && node scripts/run-e2e.mjs",
+    "vsce:package": "vsce package --no-dependencies",
+    "vsce:publish": "vsce publish --no-dependencies",
+    "clean": "rm -rf dist out *.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.0"
+  }
+}

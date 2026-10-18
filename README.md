@@ -1,0 +1,57 @@
+# Extension Loadout
+
+Equip each workspace with only the extensions it needs.
+
+VS Code loads every enabled extension into every window. A Python web project ends up starting a Gradle daemon because `node_modules` happens to contain a `build.gradle`, and an Android project carries a dozen language servers it never uses. Each one costs memory and startup time.
+
+Extension Loadout keeps a per-workspace list of extensions to turn **on** or **off**, in a small file next to your code, and applies it with one click.
+
+## How it works
+
+- Open the **Extension Loadout** view in the activity bar. Every installed extension is in one of three groups:
+  - **Turned on here**: runs in this workspace, even if it is off globally.
+  - **Turned off here**: never runs in this workspace.
+  - **Following global setting**: does whatever the Extensions view says.
+- Use the inline buttons to move an extension between groups, or run **Extension Loadout: Choose Extensions for This Workspace...** and tick the ones you want.
+- Changes are saved to `.vscode/extension-loadout.json`:
+
+  ```json
+  {
+    "enable": ["vscjava.vscode-gradle"],
+    "disable": ["ms-python.python"]
+  }
+  ```
+
+- Click **Apply Loadout and Restart VS Code** (view title, status bar, or the prompt). VS Code quits, the loadout is written, and VS Code reopens your windows. This takes a few seconds.
+
+Commit the file and everyone who opens the repository gets offered the same loadout. When a workspace's file and its actual extension state differ, for example on a fresh clone, Extension Loadout says so once when the folder opens.
+
+### Turning something off everywhere except one project
+
+Disable the extension globally in the Extensions view, then put it in the `enable` list of the project that needs it.
+
+## Why a restart?
+
+VS Code has no API for one extension to turn another on or off. The per-workspace on/off state lives in VS Code's own workspace storage, which VS Code reads once at startup and keeps in memory, so a window reload does not pick up changes.
+
+Extension Loadout starts a small helper process and asks VS Code to quit. Once VS Code has fully exited, the helper writes the new state into that workspace's storage, which is the same place **Enable (Workspace)** / **Disable (Workspace)** in the Extensions view write to, and starts VS Code again. Unsaved editors are restored by VS Code's hot exit, as on any normal quit.
+
+The helper only touches the two keys VS Code uses for workspace extension enablement (`extensionsIdentifiers/enabled` and `extensionsIdentifiers/disabled`) in the current workspace. Global settings are never changed. If you cancel the quit, nothing is written. The helper's log is in your temp folder as `extension-loadout-restart.log`.
+
+## Limits
+
+- Multi-root workspaces use the first folder's `.vscode/extension-loadout.json`.
+- Only extensions in your default profile's extensions folder are listed. Built-in extensions are not listed.
+- Restart has been tested on macOS. On Windows and Linux VS Code is relaunched from its executable.
+- Extension Loadout always stays on so you can change the loadout.
+- If another extension depends on one you turn off, VS Code may keep it running. The view marks that with a warning.
+
+## Development
+
+```sh
+npm install
+npm run test:unit   # pure logic, SQLite storage, restart helper
+npm run test:e2e    # drives a real, isolated VS Code through apply → restart → revert
+```
+
+The end-to-end test uses its own `--user-data-dir` and `--extensions-dir` under `.vscode-test/`, so your own VS Code setup is never touched.

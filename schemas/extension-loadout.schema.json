@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Extension Loadout",
+  "description": "Extensions to turn on or off in this workspace. Extensions not listed follow the global setting.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "enable": {
+      "description": "Extension IDs (publisher.name) to turn on in this workspace, even if they are off globally.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[^.\\s]+\\.[^\\s]+$" },
+      "uniqueItems": true
+    },
+    "disable": {
+      "description": "Extension IDs (publisher.name) to turn off in this workspace.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[^.\\s]+\\.[^\\s]+$" },
+      "uniqueItems": true
+    }
+  }
+}

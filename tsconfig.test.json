@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/loadout.ts", "src/catalog.ts", "src/stateDb.ts", "src/restartHelper.ts", "test/unit"]
+}
