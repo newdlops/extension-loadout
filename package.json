@@ -2,7 +2,7 @@
   "name": "extension-loadout",
   "displayName": "Extension Loadout",
   "description": "Equip each workspace with only the extensions it needs: turn extensions on or off per folder from one panel, saved in .vscode/extension-loadout.json.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "newdlops",
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -32,7 +32,7 @@
     "ui"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "workspaceContains:.vscode/extension-loadout.json"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -57,7 +57,8 @@
           "id": "extensionLoadout.explorer",
           "name": "Extension Loadout",
           "icon": "media/loadout.svg",
-          "contextualTitle": "Extension Loadout"
+          "contextualTitle": "Extension Loadout",
+          "visibility": "collapsed"
         }
       ]
     },

@@ -1,9 +1,10 @@
 import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { Override, normalizeId, overridesFromSelection, storedValuesFor } from './loadout';
-import { LoadoutModel, LoadoutSnapshot } from './model';
+import { LoadoutModel, LoadoutStatus } from './model';
 import { logPath, restartWith } from './restart';
 import { sqliteAvailable } from './stateDb';
+import { activationText } from './catalog';
 import { LoadoutTree, Node } from './tree';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -11,9 +12,23 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.showErrorMessage('Extension Loadout needs VS Code 1.101 or newer.');
     return;
   }
+  const started = Date.now();
   const model = new LoadoutModel(context);
-  const tree = new LoadoutTree();
   const output = vscode.window.createOutputChannel('Extension Loadout', { log: true });
+  const report = (what: string, e: unknown) => {
+    output.error(what, e as Error);
+    vscode.window.showErrorMessage(`Extension Loadout: ${what}: ${(e as Error).message}`);
+  };
+  // 설치 목록 전체는 목록 화면이 그려질 때만 읽는다.
+  const tree = new LoadoutTree(async () => {
+    if (!model.workspaceDbPath) return undefined;
+    try {
+      return await model.snapshot();
+    } catch (e) {
+      report('could not read the extension state', e);
+      return undefined;
+    }
+  });
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = 'extensionLoadout.applyAndRestart';
   // 전용 액티비티 바 패널과 탐색기 사이드바 양쪽에 같은 목록을 띄운다.
@@ -22,37 +37,38 @@ export function activate(context: vscode.ExtensionContext): void {
     status,
     vscode.window.createTreeView('extensionLoadout.extensions', { treeDataProvider: tree, showCollapseAll: true }),
     vscode.window.createTreeView('extensionLoadout.explorer', { treeDataProvider: tree, showCollapseAll: true }),
+    vscode.window.registerFileDecorationProvider(tree),
+    vscode.extensions.onDidChange(() => tree.invalidate()),
   );
 
-  let snap: LoadoutSnapshot | undefined;
-  const refresh = (): LoadoutSnapshot | undefined => {
+  /** loadout 파일과 워크스페이스 저장소만 읽어 상태 표시줄을 갱신하고, 목록은 다음에 그릴 때 다시 읽게 한다. */
+  const refresh = (): LoadoutStatus | undefined => {
+    let st: LoadoutStatus | undefined;
     try {
-      snap = model.workspaceDbPath ? model.snapshot() : undefined;
+      st = model.workspaceDbPath ? model.status() : undefined;
     } catch (e) {
-      snap = undefined;
-      output.error('Could not read the extension state', e as Error);
-      vscode.window.showErrorMessage(`Extension Loadout could not read the extension state: ${(e as Error).message}`);
+      report('could not read the loadout', e);
     }
-    tree.refresh(snap);
-    void vscode.commands.executeCommand('setContext', 'extensionLoadout.pending', !!snap?.pending);
-    if (snap?.pending) {
+    tree.invalidate();
+    void vscode.commands.executeCommand('setContext', 'extensionLoadout.pending', !!st?.pending);
+    if (st?.pending) {
       status.text = '$(debug-restart) Loadout: restart to apply';
-      status.tooltip = 'This workspace\'s extension loadout changed. Click to apply it and restart VS Code.';
+      status.tooltip = "This folder's extension loadout changed. Click to apply it and restart VS Code.";
       status.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
       status.show();
     } else {
       status.hide();
     }
-    return snap;
+    return st;
   };
 
-  const requireWorkspace = (): LoadoutSnapshot | undefined => {
-    const s = refresh();
-    if (!s || !model.configPath) {
+  const requireWorkspace = (): LoadoutStatus | undefined => {
+    const st = refresh();
+    if (!st || !model.configPath) {
       vscode.window.showWarningMessage('Open a local folder to set up its extension loadout.');
       return undefined;
     }
-    return s;
+    return st;
   };
 
   const applyAndRestart = async () => {
@@ -63,7 +79,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     if (!s.configExists) await model.save(new Map(s.overrides));
-    const uuid = new Map(s.rows.map((r) => [r.id, r.uuid]));
+    const uuid = new Map((await model.snapshot(s)).rows.map((r) => [r.id, r.uuid]));
     const items = storedValuesFor(s.overrides, (id) => uuid.get(id));
     try {
       output.info(`Applying loadout to ${model.workspaceDbPath}: ${JSON.stringify(items)}`);
@@ -80,17 +96,18 @@ export function activate(context: vscode.ExtensionContext): void {
     const id = typeof target === 'string' ? normalizeId(target) : target?.kind === 'ext' ? target.row.id : undefined;
     if (!id || id === model.selfId) return;
     const next = new Map(s.overrides);
-    const row = s.rows.find((r) => r.id === id);
+    const globallyEnabled = !model.readGloballyDisabled().has(id);
     // 전역 설정과 같은 상태로 "강제"하는 것은 의미가 없으므로 전역 따름으로 정리한다.
-    if (value === undefined || (row && (value === 'on') === row.globallyEnabled)) next.delete(id);
+    if (value === undefined || (value === 'on') === globallyEnabled) next.delete(id);
     else next.set(id, value);
     await model.save(next);
     refresh();
   };
 
   const pick = async () => {
-    const s = requireWorkspace();
-    if (!s) return;
+    const st = requireWorkspace();
+    if (!st) return;
+    const s = await model.snapshot(st);
     type Item = vscode.QuickPickItem & { id: string };
     const items: Item[] = s.rows
       .filter((r) => !r.locked)
@@ -98,7 +115,9 @@ export function activate(context: vscode.ExtensionContext): void {
         id: r.id,
         label: r.displayName,
         description: r.id,
-        detail: r.override ? `Turned ${r.override} here · ${r.globallyEnabled ? 'on' : 'off'} globally` : `Follows global setting (${r.globallyEnabled ? 'on' : 'off'})`,
+        detail:
+          (r.override === 'on' ? 'ON in this folder' : r.override === 'off' ? 'OFF in this folder' : 'Same as global') +
+          ` · ${r.globallyEnabled ? 'on' : 'off'} globally · ${activationText(r.activation)}`,
         picked: r.desiredOn,
       }));
     const chosen = await vscode.window.showQuickPick(items, {
@@ -156,6 +175,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (choice === 'Show Loadout') void vscode.commands.executeCommand('extensionLoadout.extensions.focus');
       });
   }
+  output.info(`Activated in ${Date.now() - started} ms`);
 }
 
 export function deactivate(): void {}

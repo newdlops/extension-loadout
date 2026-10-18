@@ -9,9 +9,10 @@ Extension Loadout keeps a per-workspace list of extensions to turn **on** or **o
 ## How it works
 
 - Open the **Extension Loadout** panel, either from its activity bar icon or in the Explorer sidebar under your files. Every installed extension is in one of three groups:
-  - **Turned on here**: runs in this workspace, even if it is off globally.
-  - **Turned off here**: never runs in this workspace.
-  - **Following global setting**: does whatever the Extensions view says.
+  - **ON in this folder** (green ✓): runs in this folder, even if it is off globally.
+  - **OFF in this folder** (red ✕): never runs in this folder.
+  - **Same as global setting**: does whatever the Extensions view says.
+- Each row shows the extension's icon and when it starts: *starts always* (it costs memory in every window), the languages it is for, *when gradlew exists*, or *no code* (themes and the like). *running now* marks extensions that are active at the moment. Hover for details, click to open the extension's page.
 - Use the inline buttons to move an extension between groups, or run **Extension Loadout: Choose Extensions for This Workspace...** and tick the ones you want.
 - Changes are saved to `.vscode/extension-loadout.json`:
 
@@ -29,6 +30,10 @@ Commit the file and everyone who opens the repository gets offered the same load
 ### Turning something off everywhere except one project
 
 Disable the extension globally in the Extensions view, then put it in the `enable` list of the project that needs it.
+
+## Staying light
+
+Extension Loadout starts at launch only in folders that have `.vscode/extension-loadout.json`. Everywhere else it stays off until you open its panel or run one of its commands. The list of installed extensions is read in the background only while the panel is visible, and is reused until you install, update or remove an extension.
 
 ## Why a restart?
 

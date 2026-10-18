@@ -24,19 +24,27 @@ export interface ExtensionRow extends InstalledExtension {
   globallyEnabled: boolean;
   override?: 'on' | 'off';
   desiredOn: boolean;
+  /** 이 창의 확장 호스트에 올라와 있음(켜져 있음). */
   running: boolean;
+  /** 실제로 활성화되어 코드가 돌고 있음. */
+  active: boolean;
   /** 자기 자신은 끌 수 없다. */
   locked: boolean;
 }
 
-export interface LoadoutSnapshot {
-  rows: ExtensionRow[];
+/** 상태 표시줄과 적용 여부 판단에 필요한 가벼운 상태. loadout 파일과 워크스페이스 저장소만 읽는다. */
+export interface LoadoutStatus {
   overrides: Overrides;
-  /** loadout 파일이 있으면 그 경로, 없으면 undefined(저장소에 기록된 값에서 시작). */
+  /** loadout 파일이 없으면 워크스페이스 저장소에 기록된 값에서 시작한다. */
   configExists: boolean;
   configErrors: string[];
   /** 파일과 워크스페이스 저장소가 달라 재시작이 필요한 상태. */
   pending: boolean;
+}
+
+/** 목록 화면용 전체 상태. 설치된 확장 매니페스트까지 읽는다. */
+export interface LoadoutSnapshot extends LoadoutStatus {
+  rows: ExtensionRow[];
   /** loadout에는 있지만 설치되지 않은 확장. */
   missing: string[];
 }
@@ -91,7 +99,7 @@ export class LoadoutModel {
     return new Set(parseStoredIdentifiers(v).map((e) => normalizeId(e.id)));
   }
 
-  snapshot(): LoadoutSnapshot {
+  status(): LoadoutStatus {
     const stored = this.readStored();
     let overrides = overridesFromStored(stored.enabled, stored.disabled);
     let configExists = false;
@@ -103,30 +111,35 @@ export class LoadoutModel {
       configErrors = parsed.errors;
       overrides = parsed.overrides;
     }
+    return {
+      overrides,
+      configExists,
+      configErrors,
+      pending: configExists && configErrors.length === 0 && isPending(overrides, stored.enabled, stored.disabled),
+    };
+  }
+
+  async snapshot(status: LoadoutStatus = this.status()): Promise<LoadoutSnapshot> {
+    const { overrides } = status;
     const globallyDisabled = this.readGloballyDisabled();
-    const running = new Set(vscode.extensions.all.map((e) => normalizeId(e.id)));
-    const installed = readInstalledExtensions(this.extensionsDir());
+    const loaded = new Map(vscode.extensions.all.map((e) => [normalizeId(e.id), e]));
+    const installed = await readInstalledExtensions(this.extensionsDir());
     const rows: ExtensionRow[] = installed.map((ext) => {
       const globallyEnabled = !globallyDisabled.has(ext.id);
       const override = overrides.get(ext.id);
+      const live = loaded.get(ext.id);
       return {
         ...ext,
         globallyEnabled,
         override,
         desiredOn: override ? override === 'on' : globallyEnabled,
-        running: running.has(ext.id),
+        running: !!live,
+        active: !!live?.isActive,
         locked: ext.id === this.selfId,
       };
     });
     const known = new Set(rows.map((r) => r.id));
-    return {
-      rows,
-      overrides,
-      configExists,
-      configErrors,
-      pending: configExists && configErrors.length === 0 && isPending(overrides, stored.enabled, stored.disabled),
-      missing: [...overrides.keys()].filter((id) => !known.has(id)),
-    };
+    return { ...status, rows, missing: [...overrides.keys()].filter((id) => !known.has(id)) };
   }
 
   async save(overrides: Overrides): Promise<void> {

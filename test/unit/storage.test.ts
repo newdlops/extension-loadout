@@ -27,7 +27,7 @@ test('writeItems sets and deletes keys without touching others', () => {
   assert.deepEqual(readItems(file, ['a', 'b', 'other.key']), { a: '[1]', b: undefined, 'other.key': 'keep me' });
 });
 
-test('readInstalledExtensions reads names, skips obsolete and missing folders', () => {
+test('readInstalledExtensions reads names, skips obsolete and missing folders', async () => {
   const dir = tmp();
   const ext = (folder: string, manifest: object, nls?: object) => {
     fs.mkdirSync(path.join(dir, folder));
@@ -47,7 +47,7 @@ test('readInstalledExtensions reads names, skips obsolete and missing folders', 
       { identifier: { id: 'pub.gone' }, version: '1.0.0', relativeLocation: 'pub.gone-1.0.0' },
     ]),
   );
-  const list = readInstalledExtensions(dir);
+  const list = await readInstalledExtensions(dir);
   assert.deepEqual(
     list.map((e) => [e.id, e.displayName, e.uuid]),
     [
