@@ -109,10 +109,11 @@ test('the sh helper waits for the process, applies .sql plans and removes them',
   const file = vscodeDb(path.join(root, 'ws'));
   const planDir = path.join(root, 'plans');
   writePlanFiles(planDir, [{ dbPath: file, items: { 'extensionsIdentifiers/enabled': '[{"id":"on.quit"}]' } }]);
-  const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 700)']);
+  // 부하가 걸린 CI에서도 흔들리지 않도록 넉넉히 살아 있는 프로세스를 기다리게 하고, 고정 대기 대신 조건을 확인한다.
+  const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 2500)']);
   const log = path.join(root, 'log.txt');
   const helper = spawn('/bin/sh', ['-c', WAIT_AND_APPLY_SH, 'test-helper', String(sleeper.pid), planDir, log, sqlite!]);
-  await new Promise((r) => setTimeout(r, 300));
+  for (let i = 0; i < 40 && !fs.existsSync(path.join(planDir, 'helper.pid')); i++) await new Promise((r) => setTimeout(r, 50));
   assert.ok(fs.existsSync(path.join(planDir, 'helper.pid')), 'helper records its pid while waiting');
   assert.equal(readItems(file, ['extensionsIdentifiers/enabled'])['extensionsIdentifiers/enabled'], undefined, 'nothing written while VS Code runs');
   await new Promise((r) => helper.on('exit', r));
