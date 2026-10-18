@@ -36,9 +36,13 @@ export function levelText(level: PressureLevel): string {
 
 export function pressureText(p: Pressure): string {
   const head = t('Memory pressure: {0}', levelText(p.level));
-  if (p.swapUsed !== undefined && p.swapTotal) return `${head} · ${t('swap {0} / {1}', gb(p.swapUsed), gb(p.swapTotal))}`;
-  if (p.free !== undefined && p.total) return `${head} · ${t('{0} of {1} free', gb(p.free), gb(p.total))}`;
-  return head;
+  const parts = [head];
+  if (p.free !== undefined && p.total) parts.push(t('{0} of {1} free', gb(p.free), gb(p.total)));
+  if (p.swapUsed !== undefined && p.swapTotal) parts.push(t('swap {0} / {1}', gb(p.swapUsed), gb(p.swapTotal)));
+  // 스왑이 분당 64MB 이상 늘 때만 보인다. 그보다 적으면 잡음이다.
+  if (p.swapRate !== undefined && p.swapRate >= 64 * 1024 ** 2) parts.push(t('swap growing {0} per minute', `${Math.round(p.swapRate / 1024 ** 2)} MB`));
+  if (p.compressed !== undefined && p.physical) parts.push(t('compressed {0} of {1}', gb(p.compressed), gb(p.physical)));
+  return parts.join(' · ');
 }
 
 /** loadout 파일 오류(영어로 만들어진 정해진 형식)를 번역한다. 모르는 형식은 그대로 둔다. */

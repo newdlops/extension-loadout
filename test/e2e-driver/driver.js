@@ -15,6 +15,21 @@ const phaseFile = () => path.join(DIR, 'phase');
 const running = (id) => !!vscode.extensions.getExtension(id);
 const quit = () => vscode.commands.executeCommand('workbench.action.quit');
 const run = (cmd, ...args) => vscode.commands.executeCommand(cmd, ...args);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const HEAVY = 'loadouttest.dummy-heavy';
+/** 프로세스가 살아 있는지(신호 0은 Windows에서도 존재 확인으로 동작한다). Linux의 좀비(끝났지만 아직 거둬지지 않음)는 끝난 것으로 본다. */
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+  try {
+    return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, 'utf8'));
+  } catch {
+    return true;
+  }
+};
 
 /** 다른 폴더(ws2)의 VS Code 저장소에 적힌 확장 활성 상태. */
 function ws2Stored(context) {
@@ -93,13 +108,57 @@ exports.activate = async (context) => {
       // 시험용 확장이 자식 프로세스를 띄울 시간을 준다.
       await new Promise((r) => setTimeout(r, 3000));
       const memory = await run('_extensionLoadout.memory');
-      log({ phase, heavy: memory.find((m) => m.id === 'loadouttest.dummy-heavy') ?? null });
+      const heavy = memory.find((m) => m.id === HEAVY) ?? null;
+      log({ phase, heavy });
+      // 메모리 압박 알림이 "여기서 끄기"로 제안할 확장.
+      log({ phase, heaviest: await run('_extensionLoadout.heaviestSwitchable') });
       log({ phase, pressure: (await run('_extensionLoadout.pressure')).level });
       log({ phase, recs: await run('_extensionLoadout.recommendations') });
       log({ phase, tree: await run('_extensionLoadout.tree') });
       await run('_extensionLoadout.setViewOptions', { show: 'always' });
       log({ phase, treeAlways: await run('_extensionLoadout.tree') });
       await run('_extensionLoadout.setViewOptions', { show: 'all' });
+      // 확장 호스트 재시작: 이 확장 호스트와 무거운 확장의 자식 프로세스가 끝나고, 새 확장 호스트에서 드라이버가 1b단계로 이어간다.
+      const heavyPids = heavy ? heavy.pidList : [];
+      const procs = await run('_extensionLoadout.processes', [process.pid, ...heavyPids]);
+      const commands = Object.fromEntries(procs.map((p) => [p.pid, p.command]));
+      fs.writeFileSync(path.join(DIR, 'host-before.json'), JSON.stringify({ host: process.pid, heavyPids, commands }));
+      setPhase('1b');
+      await run('_extensionLoadout.restartExtensionHost').catch(() => undefined);
+      // 여기까지 오면(30초 넘게 이 확장 호스트가 살아 있으면) 재시작되지 않은 것이다.
+      await sleep(30_000);
+      log({ phase, error: 'the extension host was not restarted' });
+      setPhase('done');
+      await quit();
+    } else if (phase === '1b') {
+      const before = JSON.parse(fs.readFileSync(path.join(DIR, 'host-before.json'), 'utf8'));
+      // 같은 번호를 다른 프로세스가 받았을 수 있으므로(Windows는 번호를 곧바로 다시 쓴다) 명령줄까지 같을 때만 옛 프로세스가 살아 있다고 본다.
+      const stillRunning = async (pids) => {
+        const live = pids.filter(alive);
+        if (!live.length) return [];
+        const procs = await run('_extensionLoadout.processes', live);
+        return procs.filter((p) => p.command === before.commands[p.pid]).map((p) => p.pid);
+      };
+      // 옛 확장 호스트와 그 자식(1초마다 부모를 확인한다)이 끝나고, 새 확장 호스트의 무거운 확장이 자식을 다시 띄우기를 기다린다.
+      let now = null;
+      for (const until = Date.now() + 20_000; Date.now() < until; await sleep(1000)) {
+        const memory = await run('_extensionLoadout.memory');
+        now = memory.find((m) => m.id === HEAVY) ?? null;
+        const respawned = !!now && now.pidList.some((p) => !before.heavyPids.includes(p));
+        if (respawned && !(await stillRunning([before.host, ...before.heavyPids])).length) break;
+      }
+      log({
+        phase,
+        hostRestart: {
+          hostBefore: before.host,
+          hostNow: process.pid,
+          commandsBefore: Object.keys(before.commands).length,
+          oldHostAlive: (await stillRunning([before.host])).length > 0,
+          heavyBefore: before.heavyPids,
+          oldHeavyAlive: await stillRunning(before.heavyPids),
+          heavyNow: now && { bytes: now.bytes, pids: now.pidList },
+        },
+      });
       setPhase('2');
       await run('extensionLoadout.applyAndRestart');
     } else if (phase === '2') {
@@ -121,8 +180,11 @@ exports.activate = async (context) => {
       fs.writeFileSync(path.join(DIR, 'relaunch-needed'), '1');
       await quit();
     } else if (phase === '4') {
+      // ws2는 이 저장소의 git worktree다. "다른 폴더에 적용"이 미리 골라 두는 worktree 목록에 들어 있어야 한다.
+      const candidates = await run('_extensionLoadout.folderCandidates');
+      log({ phase, candidates });
       setPhase('5');
-      const picked = await run('_extensionLoadout.applyToFolders', [WS2], 'now');
+      const picked = await run('_extensionLoadout.applyToFolders', candidates.worktrees, 'now');
       log({ phase, picked });
     } else if (phase === '5') {
       log({ phase, ws2: ws2Stored(context) });

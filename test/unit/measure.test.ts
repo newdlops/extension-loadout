@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { levelFromDarwin, levelFromFree, levelFromPsi, parseSwapUsage, rank } from '../../src/pressure';
+import { levelFromCompressed, levelFromDarwin, levelFromFree, levelFromPsi, levelFromSwapRate, maxLevel, NOTIFY_COOLDOWN_MS, parseCompressed, parseMeminfoSwap, parseSwapUsage, rank, readPressure, shouldNotify, swapRate } from '../../src/pressure';
 import {
   attribute,
   descendantsOf,
@@ -118,4 +118,70 @@ test('parseSwapUsage reads sysctl vm.swapusage', () => {
     used: 8191.94 * 1024 ** 2,
   });
   assert.equal(parseSwapUsage(''), undefined);
+});
+
+test('swap filling up: per-minute growth, not the share of a swap file that macOS grows on demand', () => {
+  const MB = 1024 ** 2;
+  // 1분 사이 300MB 늘면 경고, 100MB면 정상, 줄어들면 정상.
+  assert.equal(swapRate({ at: 0, used: 1000 * MB }, 1300 * MB, 60_000), 300 * MB);
+  assert.equal(levelFromSwapRate(swapRate({ at: 0, used: 1000 * MB }, 1300 * MB, 60_000)), 'warn');
+  assert.equal(levelFromSwapRate(swapRate({ at: 0, used: 1000 * MB }, 1100 * MB, 60_000)), 'normal');
+  assert.equal(levelFromSwapRate(swapRate({ at: 0, used: 2000 * MB }, 1000 * MB, 60_000)), 'normal');
+  // 30초에 150MB = 분당 300MB.
+  assert.equal(levelFromSwapRate(swapRate({ at: 0, used: 0 }, 150 * MB, 30_000)), 'warn');
+  // 처음 잴 때, 너무 짧거나(20초 미만) 너무 긴(10분 초과) 간격은 판단하지 않는다.
+  assert.equal(swapRate(undefined, 5000 * MB, 60_000), undefined);
+  assert.equal(swapRate({ at: 0, used: 0 }, 5000 * MB, 5_000), undefined);
+  assert.equal(swapRate({ at: 0, used: 0 }, 5000 * MB, 11 * 60_000), undefined);
+  assert.equal(levelFromSwapRate(undefined), 'normal');
+  // 스왑 "사용률"이 높아도 늘지 않으면 경고가 아니다(macOS 스왑 파일은 필요한 만큼만 커진다).
+  assert.equal(levelFromSwapRate(swapRate({ at: 0, used: 8900 * MB }, 8910 * MB, 60_000)), 'normal');
+});
+
+test('compressed memory: a warning once it holds 40% of physical memory', () => {
+  const GB = 1024 ** 3;
+  // 이 Mac에서 잰 값: 48GB 중 압축 메모리가 19.5GB(40%).
+  const vmStat = 'Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages stored in compressor:             3105454.\nPages occupied by compressor:           1278006.\n';
+  assert.equal(parseCompressed(vmStat, 16384), 1278006 * 16384);
+  assert.equal(levelFromCompressed(1278006 * 16384, 48 * GB), 'warn');
+  assert.equal(levelFromCompressed(4 * GB, 48 * GB), 'normal');
+  // 16GB Mac에서 흔한 20~30%는 경고가 아니다.
+  assert.equal(levelFromCompressed(5 * GB, 16 * GB), 'normal');
+  assert.equal(levelFromCompressed(6.5 * GB, 16 * GB), 'warn');
+  assert.equal(levelFromCompressed(5 * GB, 0), 'normal');
+  assert.equal(parseCompressed('nothing here', 16384), undefined);
+  // 경고까지만 보탠다. 위험(critical)은 커널·PSI 판정만.
+  assert.equal(maxLevel('normal', 'warn', 'normal'), 'warn');
+  assert.equal(maxLevel('critical', 'warn'), 'critical');
+  assert.equal(maxLevel(), 'normal');
+});
+
+test('parseMeminfoSwap reads Linux swap, none when there is no swap', () => {
+  const text = 'MemTotal:       16303428 kB\nSwapCached:            0 kB\nSwapTotal:       2097148 kB\nSwapFree:         1048574 kB\n';
+  assert.deepEqual(parseMeminfoSwap(text), { used: (2097148 - 1048574) * 1024, total: 2097148 * 1024 });
+  assert.equal(parseMeminfoSwap('SwapTotal:             0 kB\nSwapFree:              0 kB\n'), undefined);
+  assert.equal(parseMeminfoSwap(''), undefined);
+});
+
+test('readPressure on this machine: a level, and a swap rate on the second reading', async () => {
+  const first = await readPressure(process.platform, 1_000_000);
+  assert.ok(['normal', 'warn', 'critical'].includes(first.level));
+  const second = await readPressure(process.platform, 1_000_000 + 60_000);
+  if (second.swapUsed !== undefined) assert.equal(typeof second.swapRate, 'number');
+  if (process.platform === 'darwin') assert.ok((second.compressed ?? -1) >= 0 && (second.physical ?? 0) > 0);
+});
+
+test('pressure notification: once per level per window, and not again within an hour across windows and restarts', () => {
+  const now = 10 * NOTIFY_COOLDOWN_MS;
+  // 처음: 알린다.
+  assert.equal(shouldNotify('warn', 'normal', undefined, now), true);
+  // 이 창에서 이미 알린 수준이면 다시 알리지 않는다.
+  assert.equal(shouldNotify('warn', 'warn', undefined, now), false);
+  assert.equal(shouldNotify('normal', 'normal', undefined, now), false);
+  // 재시작한 새 창: 30분 전에 다른 창에서 같은 수준을 알렸으면 건너뛴다. 1시간이 지나면 다시 알린다.
+  assert.equal(shouldNotify('warn', 'normal', { level: 'warn', at: now - NOTIFY_COOLDOWN_MS / 2 }, now), false);
+  assert.equal(shouldNotify('warn', 'normal', { level: 'warn', at: now - NOTIFY_COOLDOWN_MS }, now), true);
+  // 더 높은 수준(위험)은 최근에 경고를 알렸어도 바로 알린다.
+  assert.equal(shouldNotify('critical', 'warn', { level: 'warn', at: now - 1000 }, now), true);
+  assert.equal(shouldNotify('warn', 'normal', { level: 'critical', at: now - 1000 }, now), false);
 });

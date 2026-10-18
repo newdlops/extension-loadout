@@ -9,7 +9,7 @@ VS Code loads every enabled extension into every window. A Django repository sti
 ## Highlights
 
 - **Per-folder on/off.** Every extension is *ON in this folder*, *OFF in this folder* (green ✓ / red ✕), or *same as the global setting*. The choice is saved in `.vscode/extension-loadout.json`, so you can commit it.
-- **See what it costs.** *Memory in this window* lists the memory of the processes each extension started (language servers, daemons), in this window and in all windows. Heavy ones are highlighted, and a memory pressure watch tells you when the machine is running low.
+- **See what it costs.** *Memory in this window* lists the memory of the processes each extension started (language servers, daemons), in this window and in all windows. Heavy ones are highlighted, and a memory pressure watch tells you when the machine is running low and offers to turn off the heaviest one here.
 - **Safe suggestions.** *Not needed in this folder* lists extensions that only start for languages or files this folder does not have, or that the repository marks as unwanted. *You usually turn these off* learns from what you turned off in folders with a similar stack. *Recommended by this repo* shows what `.vscode/extensions.json` asks for.
 - **Select and act in bulk.** Tick checkboxes (a group's checkbox selects the whole group) and *Turn Off Selected*, or turn all suggestions off at once. Dependencies and extension packs are handled for you.
 - **A dashboard** with every extension in one sortable, filterable table.
@@ -61,9 +61,10 @@ Global settings are never changed. The helper's log is `extension-loadout-restar
 ## Memory
 
 - Memory is the real footprint of the processes an extension started, found by the extension's install folder in their command line (or their parent process): macOS reports memory it has compressed too, Linux adds swap, Windows uses private bytes. Plain RSS can be several times too low on a machine that is swapping.
-- Memory used *inside* the shared extension host cannot be split per extension; VS Code does not expose it. **Restart Extension Host** gives all of it back for this window without restarting VS Code.
+- Memory used *inside* the shared extension host cannot be split per extension; VS Code does not expose it. **Restart Extension Host** stops this window's extension host, which gives all of it back, and starts a fresh one without restarting VS Code. Language servers normally stop with it and start again fresh.
 - Measured only when the panel or dashboard is shown (at most once a minute) or when you ask.
-- The memory pressure watch reads the kernel's pressure level (macOS), PSI (Linux) or free memory (Windows) once a minute while Extension Loadout is active, shows the heaviest extension in the status bar when memory is tight, and notifies you once per session.
+- The memory pressure watch checks once a minute while Extension Loadout is active. Memory counts as *tight* when the system says so (the kernel's pressure level on macOS, PSI on Linux, free memory elsewhere), when swap grows by 256 MB or more a minute, or, on macOS, when compressed memory takes up 40% or more of physical memory. Only the system's own measure can make it *critical*. The size of swap itself is not used, because macOS grows its swap files as needed.
+- When memory is tight, the status bar shows the heaviest extension in this window, and a notification offers **Turn Off … Here** for the heaviest extension you can turn off in this folder, **Show Memory** and **Restart Extension Host**. The notification appears at most once an hour across all windows, so restarting VS Code to apply a loadout does not bring it back; it appears sooner only if memory becomes critical.
 
 ## Suggestions
 
@@ -96,7 +97,7 @@ Extensions listed under `unwantedRecommendations` in `.vscode/extensions.json` a
 | Setting | Default | |
 | --- | --- | --- |
 | `extensionLoadout.memoryWatch.enabled` | `true` | Check memory pressure every minute while Extension Loadout is active |
-| `extensionLoadout.memoryWatch.notify` | `true` | Notify once per session when memory gets tight |
+| `extensionLoadout.memoryWatch.notify` | `true` | Notify when memory gets tight, at most once an hour across all windows |
 | `extensionLoadout.heavyThresholdMB` | `500` | Highlight extensions whose processes use at least this much in this window |
 
 ## Staying light
@@ -122,8 +123,8 @@ VS Code 표시 언어가 한국어이면(한국어 언어 팩) 패널, 대시보
 ```sh
 npm install
 npm run test:unit   # rules, catalog, suggestions, processes, helpers, l10n completeness
-npm run test:e2e    # drives isolated VS Code windows through apply → restart → apply on quit
-                    # → other folders → undo, plus multi-root workspaces and profiles
+npm run test:e2e    # drives isolated VS Code windows through extension host restart → apply → restart
+                    # → apply on quit → a git worktree → undo, plus multi-root workspaces and profiles
 npm run test:e2e:open   # macOS: installed .vsix, relaunch with `open -n -a`, window restore
 node scripts/screenshots.mjs [--ko]   # README screenshots (macOS)
 ```

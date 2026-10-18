@@ -1,9 +1,10 @@
 // 격리된 VS Code(별도 user-data-dir, extensions-dir)에서 Extension Loadout을 처음부터 끝까지 시험한다. macOS·Linux·Windows 공통.
-//  0단계: 두 번째 폴더(ws2)를 한 번 열어 VS Code 저장소를 만든다(다른 폴더에 적용하기 시험용).
-//  1단계: loadout이 전역 ON 확장을 끄고 전역 OFF 확장을 켠다 → 지금 재시작
+//  0단계: ws의 git worktree(ws2)를 한 번 열어 VS Code 저장소를 만든다(다른 폴더에 적용하기 시험용).
+//  1단계: 추천·메모리·압박·목록 확인 → 확장 호스트 재시작(1b: 새 확장 호스트, 무거운 확장의 자식 프로세스 교체 확인)
+//         → loadout이 전역 ON 확장을 끄고 전역 OFF 확장을 켠다 → 지금 재시작
 //  2단계: 반영 확인, 체크박스로 고른 것 한꺼번에 끄기, 여러 개를 전역 따름으로 → 지금 재시작
 //  3단계: 원래대로 돌아왔는지 확인, 하나 끄고 "종료할 때 적용" 예약 → 그냥 종료(하네스가 다시 띄움)
-//  4단계: 종료할 때 적용됐는지 확인 → ws2에도 적용하며 재시작
+//  4단계: 종료할 때 적용됐는지 확인 → git worktree로 찾은 ws2에도 적용하며 재시작
 //  5단계: ws2 저장소에 적용됐는지 확인 → 되돌리기
 //  6단계: ws2가 원래대로인지 확인 → 한 번 더 되돌리기
 //  7단계: 이 폴더 상태와 loadout 파일이 3단계 이전으로 돌아왔는지 확인
@@ -55,8 +56,15 @@ const ws2 = path.join(DIR, 'ws2');
 fs.rmSync(DIR, { recursive: true, force: true });
 fs.mkdirSync(path.join(ud, 'User', 'globalStorage'), { recursive: true });
 fs.mkdirSync(path.join(ws, '.vscode'), { recursive: true });
-fs.mkdirSync(ws2, { recursive: true });
 fs.mkdirSync(exts, { recursive: true });
+// ws는 git 저장소, ws2는 그 worktree. 사용자 git 설정(서명, 훅, fsmonitor)의 영향을 받지 않게 이 명령에서만 끈다.
+const git = (...args) =>
+  execFileSync('git', ['-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${path.join(DIR, 'no-hooks')}`, '-c', 'commit.gpgsign=false', '-c', 'user.name=e2e', '-c', 'user.email=e2e@example.invalid', '-C', ws, ...args], { stdio: 'ignore' });
+git('init', '-q');
+// 격리된 VS Code의 git 확장이 이 저장소에 fsmonitor 데몬을 띄우지 않도록 저장소 설정으로도 끈다.
+git('config', 'core.fsmonitor', 'false');
+git('commit', '-q', '--allow-empty', '--no-verify', '-m', 'e2e');
+git('worktree', 'add', '-q', '-b', 'e2e-worktree', ws2);
 
 const cli = (args) => execFileSync(CLI, args, { stdio: 'ignore', shell: isWin });
 const pack = (cwd, out, extra = []) => {
@@ -108,15 +116,27 @@ const env = { ...process.env, EXTENSION_LOADOUT_E2E_DIR: DIR, EXTENSION_LOADOUT_
 delete env.ELECTRON_RUN_AS_NODE;
 const launch = (folder) => spawn(CODE, [...base, folder], { env, detached: !isWin, stdio: 'ignore' }).unref();
 
+// 격리 VS Code가 떠 있는지. 크래시 보고 도우미(crashpad handler)는 VS Code가 끝난 뒤에도 몇 분씩 남기도 하므로 세지 않는다.
+// Windows는 PowerShell 자신의 명령줄에도 경로가 들어가므로 Code.exe만 본다.
+const winCode = `Get-CimInstance Win32_Process -Filter "Name='Code.exe'" | Where-Object { $_.CommandLine -like '*${ud.replace(/'/g, "''")}*' }`;
 function alive() {
   try {
     if (isWin) {
-      const ps = `(Get-CimInstance Win32_Process -Filter "Name='Code.exe'" | Where-Object { $_.CommandLine -like '*${ud.replace(/'/g, "''")}*' } | Measure-Object).Count`;
+      const ps = `(${winCode} | Where-Object { $_.CommandLine -notlike '*crashpad*' } | Measure-Object).Count`;
       return Number(execFileSync('powershell.exe', ['-NoProfile', '-Command', ps]).toString().trim()) > 0;
     }
-    return execFileSync('pgrep', ['-f', ud]).toString().trim().length > 0;
+    return execFileSync('ps', ['-A', '-ww', '-o', 'command']).toString().split('\n').some((l) => l.includes(ud) && !l.includes('crashpad'));
   } catch {
     return false;
+  }
+}
+/** 시험이 남긴 프로세스(크래시 보고 도우미 포함)를 정리한다. 시험용 user-data-dir를 쥔 것만 대상이다. */
+function cleanup() {
+  try {
+    if (isWin) execFileSync('powershell.exe', ['-NoProfile', '-Command', `${winCode} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`]);
+    else execFileSync('pkill', ['-f', ud]);
+  } catch {
+    // 남은 것이 없다.
   }
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -155,6 +175,9 @@ const lines = fs.existsSync(path.join(DIR, 'driver.jsonl'))
 const at = (phase, key) => lines.find((l) => l.phase === phase && key in l)?.[key];
 const state = (phase) => lines.find((l) => l.phase === phase && 'on' in l);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+const hostRestart = at('1b', 'hostRestart');
+const candidates = at('4', 'candidates');
 
 const checks = [
   ['0단계: ws2 준비', lines.some((l) => l.ws2 === 'prepared')],
@@ -167,6 +190,9 @@ const checks = [
   ['1단계: 필터(⚡ always)는 항상 켜지는 확장만', (() => { const g = (at('1', 'treeAlways') ?? []).find((x) => x.group === 'global'); return !!g && g.items.includes(HEAVY) && !g.items.includes(RUST); })()],
   ['1단계: 확장이 띄운 프로세스 메모리 측정(80MB 자식 프로세스)', (at('1', 'heavy')?.bytes ?? 0) >= 60 * 1024 ** 2 && at('1', 'heavy')?.pids >= 1],
   ['1단계: 메모리 압박 수준 읽기', ['normal', 'warn', 'critical'].includes(at('1', 'pressure'))],
+  ['1단계: 압박 알림이 끄자고 제안할 확장 = 이 폴더에서 끌 수 있는 가장 무거운 확장', at('1', 'heaviest') === HEAVY],
+  ['1b단계: 확장 호스트 재시작 → 새 확장 호스트 프로세스에서 드라이버가 다시 실행되고 옛 프로세스는 끝남', !!hostRestart && hostRestart.hostNow !== hostRestart.hostBefore && hostRestart.commandsBefore === 1 + hostRestart.heavyBefore.length && !hostRestart.oldHostAlive],
+  ['1b단계: 무거운 확장의 옛 자식 프로세스(80MB)가 끝나고 새 확장 호스트에서 다시 뜸', !!hostRestart && hostRestart.heavyBefore.length > 0 && hostRestart.oldHeavyAlive.length === 0 && (hostRestart.heavyNow?.pids ?? []).some((p) => !hostRestart.heavyBefore.includes(p)) && hostRestart.heavyNow.bytes >= 60 * 1024 ** 2],
   ['2단계: loadout 적용 후 ON 확장 꺼짐', state('2')?.on === false],
   ['2단계: loadout 적용 후 전역 OFF 확장 켜짐', state('2')?.off === true],
   ['2단계: 선택한 확장 한꺼번에 끄기', same(at('2', 'configAfterSelectedOff'), { enable: [OFF], disable: [ON, RUST] })],
@@ -174,6 +200,7 @@ const checks = [
   ['3단계: 원래 상태로 복귀', state('3')?.on === true && state('3')?.off === false],
   ['3단계: "종료할 때 적용" 예약됨', at('3', 'scheduled') === true],
   ['4단계: VS Code를 끌 때 적용됨', state('4')?.on === false],
+  ['4단계: git worktree(ws2)를 찾아 미리 고르는 목록에 넣음', (candidates?.worktrees ?? []).some((f) => samePath(f, ws2)) && !(candidates?.others ?? []).some((f) => samePath(f, ws2))],
   ['5단계: 다른 폴더(ws2)에도 적용됨', same(at('5', 'ws2'), { enabled: null, disabled: [ON] })],
   ['6단계: 되돌리기로 ws2 원상 복구', same(at('6', 'ws2'), { enabled: null, disabled: null }) && state('6')?.on === false],
   ['7단계: 한 번 더 되돌리기로 이 폴더 원상 복구', state('7')?.on === true && same(state('7')?.config, { enable: [], disable: [] })],
@@ -196,9 +223,7 @@ if (failed) {
   for (const l of lines) console.log(JSON.stringify(l));
   const restartLog = path.join(os.tmpdir(), 'extension-loadout-restart.log');
   if (fs.existsSync(restartLog)) console.log('--- restart log\n' + fs.readFileSync(restartLog, 'utf8').split('\n').slice(-12).join('\n'));
-  if (alive()) {
-    if (isWin) execFileSync('powershell.exe', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process -Filter "Name='Code.exe'" | Where-Object { $_.CommandLine -like '*${ud}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`]);
-    else execFileSync('pkill', ['-f', ud]);
-  }
+  cleanup();
   process.exit(1);
 }
+cleanup();

@@ -25,7 +25,7 @@ import {
 import { ExtensionRow, LoadoutModel, LoadoutSnapshot, LoadoutStatus } from './model';
 import type { PlanTarget } from './plan';
 import type { Suggestion } from './recommend';
-import { Pressure, PressureLevel, rank, readPressure } from './pressure';
+import { Pressure, PressureLevel, rank, readPressure, shouldNotify } from './pressure';
 import { ExtMemory, formatBytes, measureExtensions } from './processes';
 import { cancelOnQuit, ensureQuitHelper, logPath, pendingOnQuit, restartNow, scheduleOnQuit } from './restart';
 import { readItems } from './stateDb';
@@ -38,6 +38,7 @@ const HISTORY_KEY = 'extensionLoadout.history';
 const PRESETS_KEY = 'extensionLoadout.presets';
 const LEARNED_KEY = 'extensionLoadout.learned';
 const VIEW_KEY = 'extensionLoadout.viewOptions';
+const NOTIFIED_KEY = 'extensionLoadout.pressureNotified';
 
 export interface Preset {
   name: string;
@@ -242,6 +243,17 @@ export class LoadoutController implements vscode.Disposable {
     return this.measuring;
   }
 
+  /** 메모리를 가장 많이 쓰는 것 가운데 이 폴더에서 끌 수 있는 확장. */
+  async heaviestSwitchable(): Promise<string | undefined> {
+    const snap = await this.snapshot();
+    if (!snap) return undefined;
+    const rows = new Map(snap.rows.map((r) => [r.id, r]));
+    return this.memory?.list.find((m) => {
+      const r = rows.get(m.id);
+      return m.bytes > 0 && r && !r.locked && r.desiredOn && r.override !== 'on';
+    })?.id;
+  }
+
   memoryList(): ExtMemory[] {
     return this.memory?.list ?? [];
   }
@@ -268,13 +280,23 @@ export class LoadoutController implements vscode.Disposable {
       if (rose) await this.measureMemory();
       this.updateStatusBar();
       const notify = vscode.workspace.getConfiguration('extensionLoadout.memoryWatch').get<boolean>('notify', true);
-      if (notify && rank(p.level) > rank(this.notifiedLevel)) {
+      const last = this.context.globalState.get<{ level: PressureLevel; at: number }>(NOTIFIED_KEY);
+      if (notify && shouldNotify(p.level, this.notifiedLevel, last, Date.now())) {
         this.notifiedLevel = p.level;
+        void this.context.globalState.update(NOTIFIED_KEY, { level: p.level, at: Date.now() });
         const top = this.memory?.list.find((m) => m.bytes > 0);
         const msg = top
           ? t('Memory is tight. In this window, {0} uses {1}.', this.displayName(top.id), formatBytes(top.bytes))
           : t('Memory is tight.');
-        void vscode.window.showWarningMessage(msg, t('Show Memory'), t('Restart Extension Host'), t("Don't Show Again")).then((go) => {
+        // 끌 수 있는 가장 무거운 확장(설치된 확장, 이 폴더에서 일부러 켠 것이 아닌 것)은 바로 끄자고 제안한다.
+        const offer = await this.heaviestSwitchable();
+        const turnOff = offer ? t('Turn Off {0} Here', this.displayName(offer)) : undefined;
+        const buttons = [...(turnOff ? [turnOff] : []), t('Show Memory'), t('Restart Extension Host'), t("Don't Show Again")];
+        void vscode.window.showWarningMessage(msg, ...buttons).then(async (go) => {
+          if (go && go === turnOff && offer) {
+            const n = await this.set([offer], 'off');
+            if (n) this.offerApply(t('Turned off {0} for this folder.', this.displayName(offer)));
+          }
           if (go === t('Show Memory')) void this.showMemory();
           if (go === t('Restart Extension Host')) void this.restartExtensionHost();
           if (go === t("Don't Show Again")) void vscode.workspace.getConfiguration('extensionLoadout.memoryWatch').update('notify', false, vscode.ConfigurationTarget.Global);

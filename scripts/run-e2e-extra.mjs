@@ -76,6 +76,14 @@ const checks = [
   ['프로필: 그 프로필에 설치된 확장만 목록에', same(get('profile', 'installed'), [RUST])],
   ['오류 없음', !lines.some((l) => l.error)],
 ];
+// 시험이 남긴 프로세스(VS Code가 끝난 뒤에도 남는 크래시 보고 도우미 등)를 정리한다. 시험용 user-data-dir를 쥔 것만 대상이다.
+try {
+  if (isWin) execFileSync('powershell.exe', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process -Filter "Name='Code.exe'" | Where-Object { $_.CommandLine -like '*${ud.replace(/'/g, "''")}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`]);
+  else execFileSync('pkill', ['-f', ud]);
+} catch {
+  // 남은 것이 없다.
+}
+
 let failed = false;
 for (const [name, ok] of checks) {
   console.log(`${ok ? '✔' : '✖'} ${name}`);

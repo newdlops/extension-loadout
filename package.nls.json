@@ -34,6 +34,6 @@
   "viewsWelcome.noFolder": "Open a folder to choose which extensions run in it.",
   "config.title": "Extension Loadout",
   "config.memoryWatch.enabled": "Check the system memory pressure every minute while Extension Loadout is active, and show which extensions use memory in this window when it gets tight.",
-  "config.memoryWatch.notify": "Show a notification (once per session) when memory gets tight. The status bar indicator is shown either way.",
+  "config.memoryWatch.notify": "Show a notification when memory gets tight, at most once an hour across all windows (sooner if it becomes critical). The status bar indicator is shown either way.",
   "config.heavyThresholdMB": "Extensions whose processes use at least this many MB in this window are highlighted as heavy."
 }

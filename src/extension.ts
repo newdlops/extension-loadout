@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { LoadoutController } from './controller';
 import { Dashboard } from './dashboard';
 import { Override } from './loadout';
+import { listProcesses } from './processes';
 import { sqliteAvailable } from './stateDb';
 import type { Node } from './tree';
 
@@ -71,7 +72,14 @@ export function activate(context: vscode.ExtensionContext): LoadoutController | 
 
   // 테스트용 명령(밑줄로 시작해 명령 팔레트에 나오지 않는다).
   reg('_extensionLoadout.suggestions', async () => (await c.currentSuggestions()).map((x) => x.id));
-  reg('_extensionLoadout.memory', async () => (await c.measureMemory()).map((m) => ({ id: m.id, bytes: m.bytes, pids: m.pids.length, all: m.allWindowsBytes })));
+  reg('_extensionLoadout.memory', async () => (await c.measureMemory()).map((m) => ({ id: m.id, bytes: m.bytes, pids: m.pids.length, pidList: m.pids, all: m.allWindowsBytes })));
+  reg('_extensionLoadout.restartExtensionHost', () => c.restartExtensionHost(false));
+  reg('_extensionLoadout.heaviestSwitchable', () => c.heaviestSwitchable());
+  reg('_extensionLoadout.processes', async (pids: number[]) => (await listProcesses()).filter((p) => pids.includes(p.pid)).map((p) => ({ pid: p.pid, command: p.command })));
+  reg('_extensionLoadout.folderCandidates', async () => {
+    const x = await c.otherFolderCandidates();
+    return { worktrees: x.worktrees.map((e) => e.folder), others: x.others.map((e) => e.folder), neverOpened: x.neverOpened };
+  });
   reg('_extensionLoadout.pressure', () => c.checkPressure());
   // 의존 관계 확인을 묻지 않고(all/only) 바꾼다.
   reg('_extensionLoadout.set', (ids: string[], value: Override | undefined, mode: 'all' | 'only' = 'all') => c.set(ids, value, mode));

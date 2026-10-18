@@ -25,7 +25,7 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
       - run: npm run compile
-      # 격리된 VS Code를 띄워 적용 → 재시작 → 종료할 때 적용 → 다른 폴더 → 되돌리기를 끝까지 돌린다.
+      # 격리된 VS Code를 띄워 확장 호스트 재시작 → 적용 → 재시작 → 종료할 때 적용 → git worktree에 적용 → 되돌리기를 끝까지 돌린다.
       - name: E2E (Linux, virtual display)
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/run-e2e.mjs

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1
+
+- The memory pressure watch also warns when swap is filling up (growing by 256 MB or more a minute, macOS and Linux) and, on macOS, when compressed memory holds 40% or more of physical memory. The kernel (macOS) and PSI (Linux) still decide when memory is critical.
+- The memory warning offers **Turn Off … Here** for the heaviest extension you can turn off in this folder.
+- The memory warning appears at most once an hour across windows and restarts (sooner only when memory becomes critical), instead of once in every new window.
+- End-to-end tests now restart the extension host and check that the extension host process and an extension's child process are replaced, and *Apply to Other Folders* is tested with a real git worktree.
+
 ## 0.5.0
 
 **See what each extension costs**
