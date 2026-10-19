@@ -17,6 +17,8 @@ const quit = () => vscode.commands.executeCommand('workbench.action.quit');
 const run = (cmd, ...args) => vscode.commands.executeCommand(cmd, ...args);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const HEAVY = 'loadouttest.dummy-heavy';
+const CHAIN = 'loadouttest.dummy-chain'; // Markdown 때문에 켜져 다른 확장을 켜는 확장(Ruff 흉내)
+const CHAINED = 'loadouttest.dummy-chained'; // 그 확장이 켠 확장(Pylance 흉내)
 /** 프로세스가 살아 있는지(신호 0은 Windows에서도 존재 확인으로 동작한다). Linux의 좀비(끝났지만 아직 거둬지지 않음)는 끝난 것으로 본다. */
 const alive = (pid) => {
   try {
@@ -104,12 +106,23 @@ exports.activate = async (context) => {
     await vscode.extensions.getExtension('newdlops.extension-loadout').activate();
     log({ phase, on: running(ON), off: running(OFF), config: readConfig() });
     if (phase === '1') {
+      // 시험용 확장이 자식 프로세스를 띄우고, VS Code가 활성화 기록을 로그에 쓸 시간을 준다.
+      await sleep(3000);
+      let acts = {};
+      for (const until = Date.now() + 15_000; Date.now() < until; await sleep(500)) {
+        acts = await run('_extensionLoadout.activations');
+        if (acts[CHAINED] && acts[CHAINED].causes.length) break;
+      }
+      log({ phase, activations: { chain: acts[CHAIN] ?? null, chained: acts[CHAINED] ?? null } });
       log({ phase, suggestions: await run('_extensionLoadout.suggestions') });
-      // 시험용 확장이 자식 프로세스를 띄울 시간을 준다.
-      await new Promise((r) => setTimeout(r, 3000));
+      log({ phase, chainSuggestion: (await run('_extensionLoadout.suggestionDetails')).find((x) => x.id === CHAIN) ?? null });
       const memory = await run('_extensionLoadout.memory');
       const heavy = memory.find((m) => m.id === HEAVY) ?? null;
       log({ phase, heavy });
+      // 언어 서버 재시작: 무거운 확장의 재시작 명령을 찾아 실행하면 자식 프로세스가 새로 뜬다.
+      log({ phase, restartCommand: (await run('_extensionLoadout.restartCommand', HEAVY)) ?? null });
+      const restarted = await run('_extensionLoadout.restartServer', HEAVY);
+      log({ phase, restartServer: restarted ? { command: restarted.command, beforePids: restarted.beforePids, afterPids: restarted.afterPids, after: restarted.after } : null });
       // 메모리 압박 알림이 "여기서 끄기"로 제안할 확장.
       log({ phase, heaviest: await run('_extensionLoadout.heaviestSwitchable') });
       log({ phase, pressure: (await run('_extensionLoadout.pressure')).level });
@@ -119,7 +132,9 @@ exports.activate = async (context) => {
       log({ phase, treeAlways: await run('_extensionLoadout.tree') });
       await run('_extensionLoadout.setViewOptions', { show: 'all' });
       // 확장 호스트 재시작: 이 확장 호스트와 무거운 확장의 자식 프로세스가 끝나고, 새 확장 호스트에서 드라이버가 1b단계로 이어간다.
-      const heavyPids = heavy ? heavy.pidList : [];
+      // 위에서 언어 서버를 다시 시작했으므로 지금의 자식 프로세스를 다시 잰다.
+      const heavyNow = (await run('_extensionLoadout.memory')).find((m) => m.id === HEAVY);
+      const heavyPids = heavyNow ? heavyNow.pidList : [];
       const procs = await run('_extensionLoadout.processes', [process.pid, ...heavyPids]);
       const commands = Object.fromEntries(procs.map((p) => [p.pid, p.command]));
       fs.writeFileSync(path.join(DIR, 'host-before.json'), JSON.stringify({ host: process.pid, heavyPids, commands }));

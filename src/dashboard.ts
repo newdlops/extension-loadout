@@ -7,7 +7,7 @@ import type { LoadoutController } from './controller';
 import { buildDashRows } from './dashboardModel';
 import { Override } from './loadout';
 import { formatBytes } from './processes';
-import { learnedText, localizeError, pressureText, startsText, suggestionText } from './text';
+import { learnedText, localizeError, pressureText, startedShort, startedText, startsText, suggestionText } from './text';
 
 const t = vscode.l10n.t;
 
@@ -16,7 +16,8 @@ type FromWebview =
   | { type: 'refresh' }
   | { type: 'set'; ids: string[]; value: Override | 'global' }
   | { type: 'command'; command: string; args?: unknown[] }
-  | { type: 'open'; id: string };
+  | { type: 'open'; id: string }
+  | { type: 'restartServer'; id: string };
 
 /** 웹뷰에서 부를 수 있는 명령(그 밖의 명령은 무시한다). */
 const ALLOWED = new Set([
@@ -100,6 +101,9 @@ export class Dashboard implements vscode.Disposable {
       await vscode.commands.executeCommand(m.command, ...(m.args ?? []));
     } else if (m.type === 'open') {
       await vscode.commands.executeCommand('extension.open', m.id);
+    } else if (m.type === 'restartServer' && typeof m.id === 'string') {
+      await this.c.restartServer(m.id);
+      await this.post();
     }
   }
 
@@ -115,7 +119,13 @@ export class Dashboard implements vscode.Disposable {
       learned: this.c.learnedList(),
       recommended: this.c.repoRecommendations().recommended,
       iconUri: (file) => this.panel.webview.asWebviewUri(vscode.Uri.file(file)).toString(),
-      text: { starts: startsText, suggestion: suggestionText, learned: learnedText },
+      started: (id) => {
+        const info = this.c.activationInfo().get(id);
+        const short = info && startedShort(info.causes, this.c.tree.nameOf);
+        return info && short ? { short, detail: startedText({ id, event: info.event, startup: false }, info.causes, this.c.tree.nameOf) } : undefined;
+      },
+      restartable: (id) => !!this.c.tree.restartCommand(id),
+      text: { starts: startsText, suggestion: (s) => suggestionText(s, this.c.tree.nameOf), learned: learnedText },
     });
     const totalMemory = this.c.memoryList().reduce((a, m) => a + m.bytes, 0);
     return {
@@ -178,6 +188,7 @@ export class Dashboard implements vscode.Disposable {
       cancel: t('Cancel'),
       memoryTight: t('Memory is tight'),
       restartHost: t('Restart extension host'),
+      restartServer: t('Restart language server'),
       undo: t('Undo last apply'),
       otherFolders: t('Apply to other folders…'),
       savePreset: t('Save as preset…'),

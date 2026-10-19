@@ -1,0 +1,1 @@
+{"name":"dummy-chained","displayName":"Loadout Test Dummy (started by another)","publisher":"loadouttest","version":"0.0.1","license":"MIT","engines":{"vscode":"^1.85.0"},"activationEvents":["onLanguage:rust"],"main":"./index.js","repository":{"type":"git","url":"https://example.invalid/dummy"}}

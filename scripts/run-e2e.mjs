@@ -1,6 +1,7 @@
 // 격리된 VS Code(별도 user-data-dir, extensions-dir)에서 Extension Loadout을 처음부터 끝까지 시험한다. macOS·Linux·Windows 공통.
 //  0단계: ws의 git worktree(ws2)를 한 번 열어 VS Code 저장소를 만든다(다른 폴더에 적용하기 시험용).
-//  1단계: 추천·메모리·압박·목록 확인 → 확장 호스트 재시작(1b: 새 확장 호스트, 무거운 확장의 자식 프로세스 교체 확인)
+//  1단계: 켜진 이유(연쇄)·추천·메모리·언어 서버 재시작·압박·목록 확인
+//         → 확장 호스트 재시작(1b: 새 확장 호스트, 무거운 확장의 자식 프로세스 교체 확인)
 //         → loadout이 전역 ON 확장을 끄고 전역 OFF 확장을 켠다 → 지금 재시작
 //  2단계: 반영 확인, 체크박스로 고른 것 한꺼번에 끄기, 여러 개를 전역 따름으로 → 지금 재시작
 //  3단계: 원래대로 돌아왔는지 확인, 하나 끄고 "종료할 때 적용" 예약 → 그냥 종료(하네스가 다시 띄움)
@@ -47,6 +48,8 @@ const HEAVY = 'loadouttest.dummy-heavy';
 const UNWANTED = 'loadouttest.dummy-unwanted';
 const BASE = 'loadouttest.dummy-base';
 const DEP = 'loadouttest.dummy-dep';
+const CHAIN = 'loadouttest.dummy-chain';
+const CHAINED = 'loadouttest.dummy-chained';
 
 const ud = path.join(DIR, 'ud');
 const exts = path.join(DIR, 'exts');
@@ -72,7 +75,7 @@ const pack = (cwd, out, extra = []) => {
   cli(['--user-data-dir', ud, '--extensions-dir', exts, '--install-extension', out]);
 };
 // dummy-dep은 dummy-base가 필요하므로 base를 먼저 설치한다.
-for (const name of ['dummy-on', 'dummy-off', 'dummy-rust', 'dummy-heavy', 'dummy-unwanted', 'dummy-base', 'dummy-dep']) {
+for (const name of ['dummy-on', 'dummy-off', 'dummy-rust', 'dummy-heavy', 'dummy-unwanted', 'dummy-base', 'dummy-dep', 'dummy-chained', 'dummy-chain']) {
   pack(path.join(ROOT, 'test', 'fixtures', name), path.join(DIR, `${name}.vsix`), ['--allow-missing-repository', '--skip-license']);
 }
 if (OPEN_MODE) {
@@ -94,6 +97,8 @@ fs.writeFileSync(path.join(ws, '.vscode', 'extension-loadout.json'), JSON.string
 // 저장소 권장: 설치되지 않은 확장 하나를 권장하고, UNWANTED는 원치 않는다고 적는다. package.json은 스택 표식이다.
 fs.writeFileSync(path.join(ws, '.vscode', 'extensions.json'), '{\n  // repo recommendations\n  "recommendations": ["loadouttest.not-installed"],\n  "unwantedRecommendations": ["' + UNWANTED + '"]\n}\n');
 fs.writeFileSync(path.join(ws, 'package.json'), '{"name":"ws","private":true}');
+// README.md 하나 때문에 dummy-chain이 켜지고, 그것이 dummy-chained를 켠다(Ruff → Python → Pylance 흉내).
+fs.writeFileSync(path.join(ws, 'README.md'), '# ws\n');
 
 const base = [
   '--user-data-dir', ud,
@@ -177,12 +182,19 @@ const state = (phase) => lines.find((l) => l.phase === phase && 'on' in l);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 const hostRestart = at('1b', 'hostRestart');
+const sorted = (a) => [...(a ?? [])].sort();
+const chainSuggestion = at('1', 'chainSuggestion');
+const restartServer = at('1', 'restartServer');
 const candidates = at('4', 'candidates');
 
 const checks = [
   ['0단계: ws2 준비', lines.some((l) => l.ws2 === 'prepared')],
   ['1단계: 시작 상태(전역 ON 실행, 전역 OFF 미실행)', state('1')?.on === true && state('1')?.off === false],
-  ['1단계: "필요 없음" 추천 = Rust 전용 확장 + 저장소가 원치 않는 확장', same(at('1', 'suggestions'), [RUST, UNWANTED])],
+  ['1단계: "필요 없음" 추천 = Rust 전용 확장 + 저장소가 원치 않는 확장 + Markdown 때문에 켜져 다른 확장을 켠 확장과 그 확장', same(sorted(at('1', 'suggestions')), sorted([RUST, UNWANTED, CHAIN, CHAINED]))],
+  ['1단계: 켜진 이유: dummy-chained는 dummy-chain이 켰음(VS Code 활성화 기록)', same(at('1', 'activations')?.chained?.causes, [CHAIN]) && at('1', 'activations')?.chained?.event === 'api'],
+  ['1단계: 연쇄 추천 사유 = Markdown 때문에 켜져 dummy-chained를 켬, Rust 파일 없음', same(chainSuggestion?.generic, ['markdown']) && same(chainSuggestion?.started, [CHAINED]) && !(chainSuggestion?.what ?? []).some((w) => w.includes('.md'))],
+  ['1단계: 언어 서버 재시작 명령을 찾음', at('1', 'restartCommand') === 'loadouttest.dummy-heavy.restartServer'],
+  ['1단계: 언어 서버 재시작 → 자식 프로세스가 새로 뜸', !!restartServer && restartServer.beforePids.length > 0 && restartServer.afterPids.length > 0 && !restartServer.afterPids.some((p) => restartServer.beforePids.includes(p))],
   ['1단계: 스택 표식(package.json) 감지', same(at('1', 'recs')?.signature, ['package.json'])],
   ['1단계: 비슷한 폴더에서 끈 확장 제안(내 결정 학습)', same(at('1', 'recs')?.learned, [HEAVY])],
   ['1단계: 목록에 메모리·추천·학습·저장소 권장 묶음', ['memory', 'suggest', 'learned', 'repo'].every((g) => (at('1', 'tree') ?? []).some((x) => x.group === g))],
@@ -207,7 +219,7 @@ const checks = [
   ['7단계: 라이브러리를 끄면 그것이 필요한 확장도 함께 꺼짐', same(at('7', 'afterBaseOff')?.disable, [BASE, DEP])],
   ['7단계: 필요한 확장을 켜면 라이브러리도 함께 켜짐', same(at('7', 'afterDepOn'), { enable: [], disable: [] })],
   ['7단계: 프리셋 저장 후 다른 상태에서 적용하면 그대로 돌아옴', same(at('7', 'afterPreset'), { enable: [OFF], disable: [ON] })],
-  ['7단계: 대시보드가 열리고 모든 확장을 보여줌(CSP 포함)', at('7', 'dashboard')?.html === true && at('7', 'dashboard')?.ids.includes(HEAVY) && at('7', 'dashboard')?.rows === (OPEN_MODE ? 9 : 7)],
+  ['7단계: 대시보드가 열리고 모든 확장을 보여줌(CSP 포함)', at('7', 'dashboard')?.html === true && at('7', 'dashboard')?.ids.includes(HEAVY) && at('7', 'dashboard')?.rows === (OPEN_MODE ? 11 : 9)],
   ['7단계: 대시보드에서 끈 확장이 loadout 파일에 반영됨', same(at('7', 'afterDashboard'), { enable: [OFF], disable: [ON, RUST] })],
   ['오류 없음', !lines.some((l) => l.error)],
   ['격리 VS Code 종료됨', !alive()],

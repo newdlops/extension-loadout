@@ -1,5 +1,6 @@
 // 화면에 보일 문장(번역). 순수 모듈은 데이터만 돌려주고, 문장은 여기서 vscode.l10n으로 만든다.
 import * as vscode from 'vscode';
+import type { Activated } from './activations';
 import type { Activation } from './catalog';
 import type { LearnedSuggestion } from './learning';
 import type { Pressure, PressureLevel } from './pressure';
@@ -19,9 +20,42 @@ export function startsText(a: Activation, packCount = 0): string {
   return t('on demand');
 }
 
-export function suggestionText(s: Suggestion): string {
+/** 이름 몇 개를 "A, B, C +2"처럼. */
+const names = (list: string[], max = 3) => list.slice(0, max).join(', ') + (list.length > max ? ` +${list.length - max}` : '');
+
+/** name: 확장 ID → 화면 이름. 연쇄 추천 문장에 쓴다. */
+export function suggestionText(s: Suggestion, name: (id: string) => string = (id) => id): string {
   if (!s.what) return s.reason;
-  return t('No {0} in this folder', s.what.join(', ') + (s.more ? ', …' : ''));
+  const none = s.what.join(', ') + (s.more ? ', …' : '');
+  if (s.generic?.length && s.started?.length) return t('Started {0} because of {1} files; no {2} here', names(s.started.map(name)), s.generic.join(', '), none);
+  return t('No {0} in this folder', none);
+}
+
+/** 이 창에서 왜 켜졌는지. causes는 가까운 원인부터 처음 원인까지(activations.causesOf). */
+export function startedText(a: Activated, causes: string[], name: (id: string) => string): string {
+  if (causes.length) {
+    const root = causes[causes.length - 1];
+    const via = causes.slice(0, -1).reverse().map(name);
+    return via.length ? t('started by {0} (via {1})', name(root), via.join(' → ')) : t('started by {0}', name(root));
+  }
+  const [kind, ...restParts] = a.event.split(':');
+  const rest = restParts.join(':');
+  if (a.event === '*') return t('at startup, in every window');
+  if (kind === 'onStartupFinished') return t('after startup, in every window');
+  if (kind === 'onLanguage') return t('when a {0} file was opened', rest);
+  // VS Code는 패턴을 모두 이어 붙여 기록하므로 어느 것이 맞았는지는 알 수 없다.
+  if (kind === 'workspaceContains') {
+    const list = rest.split(',');
+    return t('because the folder has one of: {0}', list.slice(0, 6).join(', ') + (list.length > 6 ? ', …' : ''));
+  }
+  if (kind === 'onCommand') return t('when {0} was run', rest);
+  if (kind === 'onView') return t('when its view was shown');
+  return a.event;
+}
+
+/** 목록에 짧게: 다른 확장이 켰으면 "started by Ruff". */
+export function startedShort(causes: string[], name: (id: string) => string): string | undefined {
+  return causes.length ? t('started by {0}', name(causes[causes.length - 1])) : undefined;
 }
 
 export function learnedText(l: LearnedSuggestion): string {

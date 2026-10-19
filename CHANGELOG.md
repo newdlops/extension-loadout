@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- **Why is it running?** Rows and the dashboard show what started each extension in this window, read from VS Code's extension host log: a file type, startup, or another extension, e.g. *started by Ruff (via Python Environments → Python)*.
+- **Suggestions follow chains.** An extension that also starts for common formats is now suggested when it started other extensions here and none of its own files exist. Ruff starts for any Markdown file and then starts the Python extension and Pylance (about 400 MB); in a folder without Python it is suggested, with what it started and their memory.
+- **Restart Language Server** on rows whose extension runs a server process (Pylance through the Python extension, rust-analyzer, ESLint, the TypeScript server and others with a restart command), in the panel, the dashboard and the command palette. It reports the memory before and after.
+
 ## 0.5.1
 
 - The memory pressure watch also warns when swap is filling up (growing by 256 MB or more a minute, macOS and Linux) and, on macOS, when compressed memory holds 40% or more of physical memory. The kernel (macOS) and PSI (Linux) still decide when memory is critical.

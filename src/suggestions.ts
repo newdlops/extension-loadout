@@ -7,7 +7,8 @@ import { Suggestion, VENDORED_DIRS, combineGlobs, evaluateSuggestions, fileListM
 
 const MAX_FILES = 5_000;
 
-export async function computeSuggestions(snap: LoadoutSnapshot, log: vscode.LogOutputChannel): Promise<Suggestion[]> {
+/** chains: 이 창에서 확장마다 그 확장 때문에 켜진 확장들(VS Code 활성화 기록). 없으면 연쇄 추천은 하지 않는다. */
+export async function computeSuggestions(snap: LoadoutSnapshot, log: vscode.LogOutputChannel, chains?: Map<string, string[]>): Promise<Suggestion[]> {
   const started = Date.now();
   // 언어 → 파일 패턴: 내장 확장과 설치된 확장(꺼진 것 포함)의 언어 정의를 모두 쓴다.
   const defs: LanguageDef[] = [];
@@ -15,7 +16,7 @@ export async function computeSuggestions(snap: LoadoutSnapshot, log: vscode.LogO
   for (const r of snap.rows) defs.push(...r.languageDefs);
   // 이 폴더에서 직접 켠 확장은 사용자의 선택이므로 추천하지 않는다.
   const candidates = planSuggestions(
-    snap.rows.filter((r) => r.override !== 'on'),
+    snap.rows.filter((r) => r.override !== 'on').map((r) => ({ ...r, started: chains?.get(r.id) })),
     languageGlobs(defs),
   );
   if (!candidates.length) return [];

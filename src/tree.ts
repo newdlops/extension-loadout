@@ -8,6 +8,7 @@
 // 항목 아이콘은 각 확장의 아이콘이고, 설명에는 메모리, 언제 켜지는지(⚡ always 등), 지금 실행 중인지를 짧게 적는다.
 // 확장 팩은 펼치면 팩에 든 확장이 보인다. 설치 목록은 화면이 실제로 그려질 때만 읽는다.
 import * as vscode from 'vscode';
+import { Activated, causesOf } from './activations';
 import { Activation, InstalledExtension } from './catalog';
 import type { ViewOptions } from './controller';
 import type { LearnedSuggestion } from './learning';
@@ -15,7 +16,7 @@ import { ExtensionRow, LoadoutSnapshot } from './model';
 import { ExtMemory, formatBytes } from './processes';
 import type { Suggestion } from './recommend';
 import type { RepoRecommendations } from './repoRecs';
-import { learnedText, localizeError, startsText, suggestionText } from './text';
+import { learnedText, localizeError, startedShort, startedText, startsText, suggestionText } from './text';
 
 const t = vscode.l10n.t;
 
@@ -106,6 +107,11 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
   private repo: RepoRecommendations = { recommended: new Set(), unwanted: new Set() };
   private memory = new Map<string, ExtMemory>();
   private builtins = new Map<string, InstalledExtension>();
+  /** 이 창에서 확장이 켜진 이유(VS Code 활성화 기록). */
+  private activations = new Map<string, Activated>();
+  private activationKey = '';
+  /** 언어 서버 재시작 명령을 찾는 함수(컨트롤러가 넘겨준다). */
+  private restartOf: (id: string) => string | undefined = () => undefined;
   private view: ViewOptions = { show: 'all', sort: 'name' };
   /** 체크박스로 고른 확장 ID. 켜짐/꺼짐 상태가 아니라 "한꺼번에 처리할 대상"이다. */
   private readonly checked = new Set<string>();
@@ -136,6 +142,32 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     this.builtins = new Map(builtins.map((b) => [b.id, b]));
     this.decorationsChanged.fire(undefined);
     this.changed.fire();
+  }
+
+  /** 활성화 기록이 바뀌었을 때만 다시 그린다. */
+  setActivations(acts: Map<string, Activated>): void {
+    const key = [...acts.values()].map((a) => `${a.id}<${a.cause ?? a.event}`).join('|');
+    if (key === this.activationKey) return;
+    this.activationKey = key;
+    this.activations = new Map(acts);
+    this.changed.fire();
+  }
+
+  setRestartLookup(fn: (id: string) => string | undefined): void {
+    this.restartOf = fn;
+  }
+
+  /** 확장 ID → 화면 이름(설치 목록, 내장 확장 순). */
+  readonly nameOf = (id: string): string => this.byId.get(id)?.displayName ?? this.builtins.get(id)?.displayName ?? id;
+
+  /** 다른 확장 때문에 켜졌으면 그 원인들(가까운 것부터). */
+  causes(id: string): string[] {
+    return causesOf(this.activations, id);
+  }
+
+  /** 프로세스를 띄워 메모리를 쓰고 있고, 언어 서버를 다시 시작하는 명령이 있으면 그 명령. */
+  restartCommand(id: string): string | undefined {
+    return this.memory.get(id)?.pids.length ? this.restartOf(id) : undefined;
   }
 
   setViewOptions(view: ViewOptions): void {
@@ -410,8 +442,10 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
       const parts = mem ? [formatBytes(mem.bytes), mem.pids.length === 1 ? t('1 process') : t('{0} processes', mem.pids.length)] : [];
       if (mem && mem.allWindowsBytes > mem.bytes) parts.push(t('all windows {0}', formatBytes(mem.allWindowsBytes)));
       if (r.builtin) parts.push(t('built-in'));
+      const by = startedShort(this.causes(r.id), this.nameOf);
+      if (by) parts.push(by);
       item.description = parts.join(' · ');
-      item.contextValue = r.builtin ? 'ext:builtin:locked' : `ext:${state}:${r.locked ? 'locked' : 'switchable'}`;
+      item.contextValue = (r.builtin ? 'ext:builtin:locked' : `ext:${state}:${r.locked ? 'locked' : 'switchable'}`) + (this.restartCommand(r.id) ? ':restart' : '');
       item.tooltip = this.tooltip(r, false, { mem });
       if (r.builtin) item.checkboxState = undefined;
       return item;
@@ -419,7 +453,7 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     if (node.suggestion || node.learned) {
       const kind = node.suggestion ? 'suggest' : 'learned';
       item.id = `${kind}:${r.id}`;
-      item.description = node.suggestion ? suggestionText(node.suggestion) : learnedText(node.learned!);
+      item.description = node.suggestion ? this.suggestionLine(node.suggestion) : learnedText(node.learned!);
       item.contextValue = `ext:${kind}:${r.locked ? 'locked' : 'switchable'}`;
       item.tooltip = this.tooltip(r, false, { suggestion: node.suggestion, learned: node.learned, mem });
       return item;
@@ -429,11 +463,13 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     item.id = node.memberOf ? `member:${node.memberOf}:${r.id}` : node.inRepoGroup ? `repo:${r.id}` : `ext:${r.id}`;
     // 배지와 글자색은 provideFileDecoration이 이 URI를 보고 붙인다.
     item.resourceUri = vscode.Uri.from({ scheme: DECORATION_SCHEME, path: `/${r.id}` });
-    item.contextValue = `ext:${state}:${r.locked ? 'locked' : 'switchable'}`;
+    item.contextValue = `ext:${state}:${r.locked ? 'locked' : 'switchable'}` + (this.restartCommand(r.id) ? ':restart' : '');
     const parts: string[] = [];
     if (mem && mem.bytes > 0) parts.push(formatBytes(mem.bytes));
     if (mismatch) parts.push(r.desiredOn ? t('not running yet') : t('still running'));
     else if (r.active) parts.push(t('● running'));
+    const by = r.active ? startedShort(this.causes(r.id), this.nameOf) : undefined;
+    if (by) parts.push(by);
     parts.push(startsText(r.activation, r.packMembers.length));
     if (r.override) parts.push(r.globallyEnabled ? t('elsewhere: on') : t('elsewhere: off'));
     if (this.repo.recommended.has(r.id)) parts.push(t('★ repo'));
@@ -464,13 +500,15 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
     md.supportThemeIcons = true;
     md.appendMarkdown(`**${r.displayName}**  \n\`${r.id}\` · v${r.version} · ${r.publisher}\n\n`);
     if (r.description) md.appendMarkdown(`${r.description}\n\n`);
-    if (extra.suggestion) md.appendMarkdown(`$(lightbulb) **${t('Safe to turn off here.')}** ${suggestionText(extra.suggestion)}.\n\n`);
+    if (extra.suggestion) md.appendMarkdown(`$(lightbulb) **${t('Safe to turn off here.')}** ${this.suggestionLine(extra.suggestion)}.\n\n`);
     if (extra.learned) md.appendMarkdown(`$(history) **${t('Based on your choices.')}** ${learnedText(extra.learned)}.\n\n`);
     const here = r.override === 'on' ? t('ON (folder setting)') : r.override === 'off' ? t('OFF (folder setting)') : t('same as global');
     md.appendMarkdown(`**${t('This folder')}:** ${here}  \n`);
     md.appendMarkdown(`**${t('Global setting')}:** ${r.globallyEnabled ? t('on') : t('off')}  \n`);
     md.appendMarkdown(`**${t('Starts')}:** ${this.activationDetail(r.activation)}  \n`);
     md.appendMarkdown(`**${t('Now')}:** ${r.active ? t('running') : r.running ? t('loaded, not started yet') : t('not loaded')}`);
+    const act = this.activations.get(r.id);
+    if (act) md.appendMarkdown(`  \n**${t('Started here')}:** ${startedText(act, this.causes(r.id), this.nameOf)}`);
     const mem = extra.mem;
     if (mem && (mem.bytes || mem.allWindowsBytes)) {
       md.appendMarkdown(`  \n**${t('Memory')}:** ${t('{0} in this window ({1} processes), {2} in all windows', formatBytes(mem.bytes), mem.pids.length, formatBytes(mem.allWindowsBytes))}`);
@@ -496,6 +534,13 @@ export class LoadoutTree implements vscode.TreeDataProvider<Node>, vscode.FileDe
       );
     }
     return md;
+  }
+
+  /** 추천 사유. 연쇄 추천이면 켠 확장들이 지금 쓰는 메모리도 덧붙인다. */
+  private suggestionLine(s: Suggestion): string {
+    const text = suggestionText(s, this.nameOf);
+    const bytes = (s.started ?? []).reduce((sum, id) => sum + (this.memory.get(id)?.bytes ?? 0), 0);
+    return bytes > 0 ? `${text} · ${t('{0} in this window', formatBytes(bytes))}` : text;
   }
 
   private activationDetail(a: Activation): string {

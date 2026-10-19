@@ -38,6 +38,11 @@ export interface DashRow {
   needs: string[];
   /** 적용이 끝났는데도 원하는 상태와 실제 상태가 다른지. */
   mismatch: boolean;
+  /** 다른 확장 때문에 켜졌으면 짧은 문장("started by Ruff")과 자세한 문장. */
+  startedBy?: string;
+  startedDetail?: string;
+  /** 언어 서버를 다시 시작할 수 있는지(프로세스가 있고 재시작 명령이 있음). */
+  restartable: boolean;
 }
 
 export function buildDashRows(input: {
@@ -48,6 +53,9 @@ export function buildDashRows(input: {
   learned: LearnedSuggestion[];
   recommended: Set<string>;
   iconUri: (file: string) => string;
+  /** 이 창에서 왜 켜졌는지(다른 확장이 켰을 때만). */
+  started?: (id: string) => { short: string; detail: string } | undefined;
+  restartable?: (id: string) => boolean;
   /** 문장 만들기(번역). */
   text: {
     starts: (a: Activation, packCount: number) => string;
@@ -87,6 +95,9 @@ export function buildDashRows(input: {
       pack: r.packMembers,
       needs: r.dependencies,
       mismatch: !input.pending && !r.locked && r.desiredOn !== r.running,
+      startedBy: input.started?.(r.id)?.short,
+      startedDetail: input.started?.(r.id)?.detail,
+      restartable: !!input.restartable?.(r.id),
     };
   });
 }

@@ -240,6 +240,7 @@
     if (r.recommendedByRepo) why.push(h('span', { class: 'tag repo' }, '★ ' + S.repo));
     if (r.locked) why.push(h('span', { class: 'tag' }, S.locked));
     if (r.builtin) why.push(h('span', { class: 'tag' }, S.builtin));
+    if (r.startedBy) why.push(h('span', { class: 'tag started', title: r.startedDetail || r.startedBy }, '↳ ' + r.startedBy));
     if (r.via) why.push(h('code', {}, r.via));
     if (r.note) why.push(h('span', { class: 'note' }, '“' + r.note + '”'));
     const now = r.mismatch ? h('span', { class: 'warn' }, '⚠ ' + (r.desiredOn ? S.mismatchOn : S.mismatchOff)) : r.active ? h('span', { class: 'running' }, '● ' + S.isRunning) : r.running ? S.loaded : S.notLoaded;
@@ -269,7 +270,12 @@
       h('td', {}, r.globallyEnabled ? S.onGlobally : S.offGlobally),
       h('td', { class: `starts ${r.startsAlways ? 'always' : ''}` }, r.starts),
       h('td', { class: 'now' }, now),
-      h('td', { class: `num ${data.heavy && r.memory >= data.heavy ? 'heavy' : ''}`, title: r.processes ? `${r.processes} ${S.processes} · ${S.allWindows} ${fmt(r.allWindowsMemory)}` : '' }, fmt(r.memory)),
+      h(
+        'td',
+        { class: `num ${data.heavy && r.memory >= data.heavy ? 'heavy' : ''}`, title: r.processes ? `${r.processes} ${S.processes} · ${S.allWindows} ${fmt(r.allWindowsMemory)}` : '' },
+        fmt(r.memory),
+        r.restartable ? h('button', { class: 'mini', title: S.restartServer, onclick: () => post({ type: 'restartServer', id: r.id }) }, '↻') : '',
+      ),
       h('td', { class: 'why' }, why),
     );
   }

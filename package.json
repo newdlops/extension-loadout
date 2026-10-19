@@ -2,7 +2,7 @@
   "name": "extension-loadout",
   "displayName": "Extension Loadout",
   "description": "%description%",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "publisher": "newdlops",
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -201,6 +201,12 @@
         "icon": "$(debug-restart-frame)"
       },
       {
+        "command": "extensionLoadout.restartServer",
+        "title": "%command.restartServer%",
+        "category": "Extension Loadout",
+        "icon": "$(debug-restart)"
+      },
+      {
         "command": "extensionLoadout.disableLearned",
         "title": "%command.disableLearned%",
         "category": "Extension Loadout",
@@ -338,13 +344,18 @@
       ],
       "view/item/context": [
         {
+          "command": "extensionLoadout.restartServer",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /:restart$/",
+          "group": "inline@0"
+        },
+        {
           "command": "extensionLoadout.enableHere",
-          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(off|global-off):switchable$/",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(off|global-off):switchable(:restart)?$/",
           "group": "inline@1"
         },
         {
           "command": "extensionLoadout.disableHere",
-          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(on|global-on|suggest|learned):switchable$/",
+          "when": "(view == extensionLoadout.extensions || view == extensionLoadout.explorer) && viewItem =~ /^ext:(on|global-on|suggest|learned):switchable(:restart)?$/",
           "group": "inline@2"
         },
         {

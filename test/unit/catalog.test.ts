@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { activationText, describeActivation, extensionFromManifest, pickProfile, profileSources, readInstalledExtensions } from '../../src/catalog';
+import { activationText, describeActivation, extensionFromManifest, pickProfile, profileSources, readInstalledExtensions, restartCommandFor, restartCommandOf } from '../../src/catalog';
 
 test('describeActivation tells always-on, triggered and code-less extensions apart', () => {
   assert.deepEqual(describeActivation({ main: './x.js', activationEvents: ['onStartupFinished'] }), {
@@ -124,4 +124,22 @@ test('readInstalledExtensions merges a profile list with application-scoped defa
   );
   const list = await readInstalledExtensions(profileSources(ext, path.join(root, 'User'), 'abc'));
   assert.deepEqual(list.map((e) => e.id).sort(), ['p.everywhere', 'p.inprofile']);
+});
+
+test('restartCommandOf finds the language server restart command; restartCommandFor falls back to the pack that owns the server', () => {
+  const python = { name: 'python', publisher: 'ms-python', main: './x.js', extensionPack: ['ms-python.vscode-pylance', 'ms-python.debugpy'], contributes: { commands: [{ command: 'python.execInTerminal', title: 'Run' }, { command: 'python.analysis.restartLanguageServer', title: '%restart%' }] } };
+  assert.equal(restartCommandOf(python, { restart: 'Restart Language Server' }), 'python.analysis.restartLanguageServer');
+  // 이름에 server가 없어도 제목이 "… Server"면 재시작 명령으로 본다.
+  assert.equal(restartCommandOf({ contributes: { commands: [{ command: 'eslint.restart', title: 'Restart ESLint Server' }] } }), 'eslint.restart');
+  assert.equal(restartCommandOf({ contributes: { commands: [{ command: 'rust-analyzer.restartServer', title: 'Restart server' }] } }), 'rust-analyzer.restartServer');
+  // 커널·터미널 재시작은 언어 서버가 아니다.
+  assert.equal(restartCommandOf({ contributes: { commands: [{ command: 'jupyter.restartkernel', title: 'Restart Kernel' }, { command: 'python.restartTerminal', title: 'Restart Terminal' }] } }), undefined);
+  const exts = [
+    extensionFromManifest(python, { id: 'ms-python.python', location: '/x/python', nls: { restart: 'Restart Language Server' } }),
+    extensionFromManifest({ name: 'vscode-pylance', publisher: 'ms-python', main: './x.js' }, { id: 'ms-python.vscode-pylance', location: '/x/pylance' }),
+    extensionFromManifest({ name: 'debugpy', publisher: 'ms-python', main: './x.js' }, { id: 'ms-python.debugpy', location: '/x/debugpy' }),
+  ];
+  assert.equal(restartCommandFor('ms-python.vscode-pylance', exts), 'python.analysis.restartLanguageServer');
+  assert.equal(restartCommandFor('ms-python.python', exts), 'python.analysis.restartLanguageServer');
+  assert.equal(restartCommandFor('unknown.ext', exts), undefined);
 });

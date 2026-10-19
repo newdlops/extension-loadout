@@ -44,6 +44,8 @@ export interface InstalledExtension {
   languageDefs: LanguageDef[];
   /** VS Code에 기본으로 들어 있는 확장. */
   builtin?: boolean;
+  /** 이 확장이 낸 "언어 서버 다시 시작" 명령(예: rust-analyzer.restartServer, eslint.restart). */
+  restartCommand?: string;
 }
 
 /** 확장 목록을 읽어 올 곳. index는 extensions.json, baseDir은 relativeLocation의 기준 폴더. */
@@ -66,6 +68,35 @@ export function languageDefsOf(manifest: Record<string, unknown>): LanguageDef[]
       filenames: strings(l.filenames),
       filenamePatterns: strings(l.filenamePatterns),
     }));
+}
+
+/**
+ * 매니페스트가 기여한 명령 가운데 언어 서버를 다시 시작하는 명령.
+ * 예: python.analysis.restartLanguageServer, rust-analyzer.restartServer, typescript.restartTsServer, eslint.restart("Restart ESLint Server").
+ */
+export function restartCommandOf(manifest: Record<string, unknown>, nls?: Record<string, unknown>): string | undefined {
+  const contributes = manifest.contributes as { commands?: unknown } | undefined;
+  const list = Array.isArray(contributes?.commands) ? contributes!.commands : [];
+  let best: { id: string; score: number } | undefined;
+  for (const c of list) {
+    const id = (c as { command?: unknown } | undefined)?.command;
+    if (typeof id !== 'string' || !/restart/i.test(id)) continue;
+    const raw = (c as { title?: unknown }).title;
+    const title = typeof raw === 'string' ? (localize(raw, nls) ?? '') : typeof (raw as { value?: unknown } | undefined)?.value === 'string' ? (raw as { value: string }).value : '';
+    const score = /language.?server/i.test(id) ? 3 : /server|lsp|daemon/i.test(id) ? 2 : /server/i.test(title) ? 1 : 0;
+    if (score && (!best || score > best.score)) best = { id, score };
+  }
+  return best?.id;
+}
+
+/**
+ * 확장의 언어 서버를 다시 시작하는 명령. 자기 명령이 없으면, 이 확장을 팩이나 의존으로 묶은 확장이 낸
+ * "언어 서버" 재시작 명령을 쓴다(Pylance의 서버는 Python 확장의 python.analysis.restartLanguageServer로 다시 시작한다).
+ */
+export function restartCommandFor(id: string, exts: InstalledExtension[]): string | undefined {
+  const own = exts.find((e) => e.id === id)?.restartCommand;
+  if (own) return own;
+  return exts.find((p) => p.restartCommand && /language.?server/i.test(p.restartCommand) && (p.packMembers.includes(id) || p.dependencies.includes(id)))?.restartCommand;
 }
 
 /** 목록에 짧게 보여줄 "언제 켜지는지". */
@@ -126,6 +157,7 @@ export function extensionFromManifest(
     packMembers: ids(manifest.extensionPack),
     languageDefs: languageDefsOf(manifest),
     builtin: info.builtin,
+    restartCommand: restartCommandOf(manifest, info.nls),
   };
 }
 

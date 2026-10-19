@@ -3,6 +3,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { ActivationLog, Activated, causesOf, chainKeyOf, startedBy } from './activations';
+import { InstalledExtension, restartCommandFor } from './catalog';
 import { dependentsOf, missingDependencies, packMembers } from './deps';
 import { LearnedEntry, LearnedSuggestion, MARKER_GLOB, learnedSuggestions, recordDecision, signatureOf } from './learning';
 import { RepoRecommendations, mergeRecommendations, parseRecommendations } from './repoRecs';
@@ -76,9 +78,19 @@ export class LoadoutController implements vscode.Disposable {
   private repo: RepoRecommendations = { recommended: new Set(), unwanted: new Set() };
   private learned: LearnedSuggestion[] = [];
   private signature?: Promise<string[]>;
+  /** 이 창에서 확장이 켜진 이유(VS Code 확장 호스트 로그). */
+  private readonly activationLog: ActivationLog;
+  private activations = new Map<string, Activated>();
+  /** 추천을 계산할 때 쓴 연쇄. 새 연쇄가 생기면 추천을 다시 계산한다. */
+  private chainKey = '';
+  /** 설치된 확장과 내장 확장(언어 서버 재시작 명령 찾기용). 메모리를 잴 때 채운다. */
+  private catalog: InstalledExtension[] = [];
 
   constructor(readonly context: vscode.ExtensionContext) {
     this.model = new LoadoutModel(context);
+    // 확장 호스트 로그는 이 확장의 로그 폴더 바로 위에 있다(…/window1/exthost/exthost.log).
+    const hostLog = context.logUri.scheme === 'file' ? path.join(path.dirname(context.logUri.fsPath), 'exthost.log') : undefined;
+    this.activationLog = new ActivationLog(hostLog, process.pid);
     this.output = vscode.window.createOutputChannel('Extension Loadout', { log: true });
     // 설치 목록 전체는 목록 화면이 그려질 때만 읽는다.
     this.tree = new LoadoutTree(async () => {
@@ -90,6 +102,7 @@ export class LoadoutController implements vscode.Disposable {
         return undefined;
       }
     });
+    this.tree.setRestartLookup((id) => restartCommandFor(id, this.catalog));
     this.status = vscode.window.createStatusBarItem('extensionLoadout.status', vscode.StatusBarAlignment.Left, 50);
     this.status.name = 'Extension Loadout';
     const viewOptions = { treeDataProvider: this.tree, showCollapseAll: true, canSelectMany: true, manageCheckboxStateManually: true };
@@ -114,6 +127,7 @@ export class LoadoutController implements vscode.Disposable {
           });
         // 메모리는 화면이 그려질 때, 마지막으로 잰 지 1분이 지났을 때만 다시 잰다.
         if (snap && (!this.memory || Date.now() - this.memory.at > 60_000)) void this.measureMemory();
+        if (snap) void this.refreshActivations();
         this.changed.fire();
       }),
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -221,6 +235,7 @@ export class LoadoutController implements vscode.Disposable {
       const started = Date.now();
       try {
         const exts = [...(await this.model.installed()), ...this.model.builtins()];
+        this.catalog = exts;
         for (const e of exts) this.names.set(e.id, e.displayName);
         const list = await measureExtensions(
           exts.map((e) => ({ id: e.id, location: e.location })),
@@ -315,6 +330,45 @@ export class LoadoutController implements vscode.Disposable {
   async showMemory(): Promise<void> {
     await vscode.commands.executeCommand('extensionLoadout.extensions.focus');
     await this.measureMemory();
+  }
+
+  /**
+   * 확장의 언어 서버를 다시 시작한다(Pylance면 Python 확장의 python.analysis.restartLanguageServer).
+   * 확장 호스트 전체를 다시 시작하지 않고 그 서버가 쌓은 메모리만 돌려받는다. 전후 메모리를 그대로 알려준다.
+   */
+  async restartServer(arg?: string | Node): Promise<{ command: string; before: number; after: number; beforePids: number[]; afterPids: number[] } | undefined> {
+    let id = typeof arg === 'string' ? arg : arg?.kind === 'ext' ? arg.row.id : undefined;
+    if (!id) {
+      const list = (await this.measureMemory()).filter((m) => this.tree.restartCommand(m.id));
+      if (!list.length) {
+        void vscode.window.showInformationMessage(t('No language server in this window can be restarted.'));
+        return undefined;
+      }
+      const pick = await vscode.window.showQuickPick(
+        list.map((m) => ({ label: this.displayName(m.id), description: formatBytes(m.bytes), id: m.id })),
+        { title: t('Restart Language Server') },
+      );
+      if (!pick) return undefined;
+      id = pick.id;
+    }
+    if (!this.catalog.length) await this.measureMemory();
+    const command = restartCommandFor(id, this.catalog);
+    if (!command) return undefined;
+    const before = (await this.measureMemory()).find((m) => m.id === id);
+    await vscode.commands.executeCommand(command);
+    // 새 서버 프로세스가 보일 때까지(최대 20초) 기다렸다가 잰다.
+    let after: ExtMemory | undefined;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      after = (await this.measureMemory()).find((m) => m.id === id);
+      if (after?.pids.some((p) => !before?.pids.includes(p))) break;
+    }
+    const name = this.displayName(id);
+    this.output.info(`Restarted ${id} with ${command}: ${formatBytes(before?.bytes ?? 0)} → ${formatBytes(after?.bytes ?? 0)}`);
+    void vscode.window.showInformationMessage(
+      t('Restarted the language server of {0}: {1} before, {2} now. It grows again while it reads the folder.', name, formatBytes(before?.bytes ?? 0), formatBytes(after?.bytes ?? 0)),
+    );
+    return { command, before: before?.bytes ?? 0, after: after?.bytes ?? 0, beforePids: before?.pids ?? [], afterPids: after?.pids ?? [] };
   }
 
   async restartExtensionHost(confirm = true): Promise<void> {
@@ -896,7 +950,15 @@ export class LoadoutController implements vscode.Disposable {
   // 추천
 
   findSuggestions(snap: LoadoutSnapshot): Promise<Suggestion[]> {
-    const p = computeSuggestions(snap, this.output)
+    const p = this.activationLog
+      .read()
+      .then((acts) => {
+        this.activations = acts;
+        this.tree.setActivations(acts);
+        const chains = startedBy(acts);
+        this.chainKey = chainKeyOf(chains);
+        return computeSuggestions(snap, this.output, chains);
+      })
       .catch((e) => {
         this.output.error('Could not check which extensions this folder needs', e as Error);
         return [] as Suggestion[];
@@ -915,6 +977,26 @@ export class LoadoutController implements vscode.Disposable {
       this.changed.fire();
     });
     return p;
+  }
+
+  /**
+   * 활성화 기록을 다시 읽는다(새로 붙은 줄만). 추천을 계산한 뒤에 새 연쇄가 생겼으면
+   * (예: Markdown 파일을 열자 Ruff가 켜지고 Python·Pylance까지 켬) 추천을 다시 계산한다.
+   */
+  async refreshActivations(): Promise<Map<string, Activated>> {
+    const acts = await this.activationLog.read();
+    this.activations = acts;
+    this.tree.setActivations(acts);
+    if (this.suggestions && chainKeyOf(startedBy(acts)) !== this.chainKey) {
+      const snap = await this.snapshot();
+      if (snap) await this.findSuggestions(snap);
+    }
+    return acts;
+  }
+
+  /** 이 창에서 왜 켜졌는지(테스트·대시보드용): 확장 ID → 이벤트, 원인들(가까운 것부터). */
+  activationInfo(): Map<string, { event: string; causes: string[] }> {
+    return new Map([...this.activations.values()].map((a) => [a.id, { event: a.event, causes: causesOf(this.activations, a.id) }]));
   }
 
   async currentSuggestions(): Promise<Suggestion[]> {

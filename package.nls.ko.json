@@ -35,5 +35,6 @@
   "config.title": "Extension Loadout",
   "config.memoryWatch.enabled": "Extension Loadout이 켜져 있는 동안 1분마다 시스템 메모리 압박을 확인하고, 메모리가 부족해지면 이 창에서 어떤 확장이 메모리를 쓰는지 보여 줍니다.",
   "config.memoryWatch.notify": "메모리가 부족해지면 알림을 띄웁니다(모든 창을 통틀어 1시간에 한 번, 위험 수준이 되면 바로). 상태 표시줄 표시는 이 설정과 관계없이 나옵니다.",
-  "config.heavyThresholdMB": "이 창에서 프로세스 메모리가 이 값(MB) 이상인 확장을 무거운 확장으로 강조합니다."
+  "config.heavyThresholdMB": "이 창에서 프로세스 메모리가 이 값(MB) 이상인 확장을 무거운 확장으로 강조합니다.",
+  "command.restartServer": "언어 서버 다시 시작"
 }

@@ -10,6 +10,7 @@ VS Code loads every enabled extension into every window. A Django repository sti
 
 - **Per-folder on/off.** Every extension is *ON in this folder*, *OFF in this folder* (green ✓ / red ✕), or *same as the global setting*. The choice is saved in `.vscode/extension-loadout.json`, so you can commit it.
 - **See what it costs.** *Memory in this window* lists the memory of the processes each extension started (language servers, daemons), in this window and in all windows. Heavy ones are highlighted, and a memory pressure watch tells you when the machine is running low and offers to turn off the heaviest one here.
+- **See why it runs.** Every running extension shows what started it in this window, read from VS Code's own log: a file type, startup, or another extension (*started by Ruff, via Python Environments → Python*).
 - **Safe suggestions.** *Not needed in this folder* lists extensions that only start for languages or files this folder does not have, or that the repository marks as unwanted. *You usually turn these off* learns from what you turned off in folders with a similar stack. *Recommended by this repo* shows what `.vscode/extensions.json` asks for.
 - **Select and act in bulk.** Tick checkboxes (a group's checkbox selects the whole group) and *Turn Off Selected*, or turn all suggestions off at once. Dependencies and extension packs are handled for you.
 - **A dashboard** with every extension in one sortable, filterable table.
@@ -61,6 +62,7 @@ Global settings are never changed. The helper's log is `extension-loadout-restar
 ## Memory
 
 - Memory is the real footprint of the processes an extension started, found by the extension's install folder in their command line (or their parent process): macOS reports memory it has compressed too, Linux adds swap, Windows uses private bytes. Plain RSS can be several times too low on a machine that is swapping.
+- **Restart Language Server** (↻ on a row that uses memory, or from the command palette) restarts just that extension's server: Pylance through the Python extension's *Restart Language Server*, rust-analyzer, ESLint, the TypeScript server and others that offer a restart command. It gives back what the server has grown by and tells you the memory before and after; the server grows again while it reads the folder.
 - Memory used *inside* the shared extension host cannot be split per extension; VS Code does not expose it. **Restart Extension Host** stops this window's extension host, which gives all of it back, and starts a fresh one without restarting VS Code. Language servers normally stop with it and start again fresh.
 - Measured only when the panel or dashboard is shown (at most once a minute) or when you ask.
 - The memory pressure watch checks once a minute while Extension Loadout is active. Memory counts as *tight* when the system says so (the kernel's pressure level on macOS, PSI on Linux, free memory elsewhere), when swap grows by 256 MB or more a minute, or, on macOS, when compressed memory takes up 40% or more of physical memory. Only the system's own measure can make it *critical*. The size of swap itself is not used, because macOS grows its swap files as needed.
@@ -72,7 +74,7 @@ Global settings are never changed. The helper's log is `extension-loadout-restar
 
 - it starts only for specific languages or files (`onLanguage`, `workspaceContains`, or commands you run yourself), not in every window;
 - none of those files exist in the folder outside `node_modules`, virtual environments and similar;
-- it does not target common formats such as JSON, Markdown or YAML;
+- it does not target common formats such as JSON, Markdown or YAML, unless it also started other extensions in this window and none of its own language's files exist here. Ruff, for example, starts for any Markdown file and then starts the Python extension and Pylance; in a folder without Python it is suggested, and the reason names what it started and the memory they use;
 - no extension that stays on depends on it, and you have not turned it on here yourself.
 
 Extensions listed under `unwantedRecommendations` in `.vscode/extensions.json` are suggested too. Anything uncertain is left out, so the list can be short or empty. Extensions marked **⚡ always** start in every window and are worth reviewing yourself; they are usually the ones that cost memory.
@@ -90,7 +92,7 @@ Extensions listed under `unwantedRecommendations` in `.vscode/extensions.json` a
 | Open Loadout Dashboard | The table view |
 | Filter and Sort… | Show all, running, ⚡ always or using memory; sort by name or memory |
 | Save Loadout as Preset… / Apply Preset to This Folder… / Delete Preset… | Reuse a loadout anywhere |
-| Show Extension Memory / Restart Extension Host | Memory tools |
+| Show Extension Memory / Restart Language Server / Restart Extension Host | Memory tools |
 
 ## Settings
 
@@ -111,6 +113,7 @@ Extension Loadout starts at launch only in folders that have a loadout file; els
 - In a multi-root workspace VS Code keeps one on/off state for the whole workspace, so folder files are merged rather than applied per folder.
 - Built-in extensions are listed only in *Memory in this window*, for information.
 - If another extension depends on one you turn off, VS Code may keep it running; the panel marks that with a warning.
+- *Why it runs* comes from VS Code's extension host log. It needs the default log level (Info); with *Developer: Set Log Level* above Info, or in remote windows, that information is simply not shown.
 
 ## 한국어
 

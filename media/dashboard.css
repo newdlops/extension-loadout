@@ -238,6 +238,16 @@ td.why {
   background: var(--vscode-charts-purple);
   color: var(--vscode-editor-background);
 }
+.tag.started {
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+}
+button.mini {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 0.9em;
+}
 .tag.repo {
   background: transparent;
   color: var(--vscode-charts-yellow);

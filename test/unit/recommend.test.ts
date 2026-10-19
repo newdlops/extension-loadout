@@ -96,3 +96,38 @@ test('fileListMatcher uses the listing and only falls back when it was truncated
   assert.equal(await cut('**/*.rs'), true);
   assert.deepEqual(asked, ['**/*.rs']);
 });
+
+// Ruff 2026.88의 실제 활성화 이벤트: Python뿐 아니라 Markdown에서도 켜진다.
+const RUFF_EVENTS = ['onLanguage:python', 'onLanguage:markdown', 'workspaceContains:*.py', 'workspaceContains:*.ipynb', 'workspaceContains:*.md', 'workspaceContains:**/pyproject.toml', 'workspaceContains:**/ruff.toml', 'workspaceContains:**/.ruff.toml'];
+const mdLangs = languageGlobs([
+  ...languageDefsOf({ contributes: { languages: [{ id: 'python', extensions: ['.py', '.pyi'] }, { id: 'markdown', extensions: ['.md', '.markdown'] }] } }),
+]);
+
+test('an extension that also starts for Markdown is suggested only when it started others here and none of its own files exist', async () => {
+  const started = ['ms-python.vscode-python-envs', 'ms-python.python', 'ms-python.vscode-pylance'];
+  // 연쇄가 없으면 지금처럼 판단하지 않는다(범용 형식 대상).
+  assert.deepEqual(planSuggestions([ext('charliermarsh.ruff', { activationEvents: RUFF_EVENTS })], mdLangs), []);
+  // 연쇄가 있으면 Markdown은 빼고 Python 쪽 조건만 확인한다.
+  const [c] = planSuggestions([ext('charliermarsh.ruff', { activationEvents: RUFF_EVENTS }, { started })], mdLangs);
+  assert.deepEqual(c.generic, ['markdown']);
+  assert.deepEqual(c.started, started);
+  const globs = c.checks.flatMap((k) => k.globs);
+  assert.ok(globs.includes('**/*.py') && globs.includes('*.ipynb') && globs.includes('**/pyproject.toml'));
+  assert.ok(!globs.some((g) => g.includes('.md')));
+  // README.md만 있는 폴더: 추천하고, 무엇을 켰는지 사유에 적는다.
+  const none = await evaluateSuggestions([c], async (g) => g.endsWith('.md'));
+  assert.equal(none.length, 1);
+  assert.deepEqual(none[0].started, started);
+  assert.match(none[0].reason, /^Started ms-python\.vscode-python-envs, ms-python\.python, ms-python\.vscode-pylance because of markdown files; no /);
+  // Python 파일이 하나라도 있으면 추천하지 않는다.
+  assert.deepEqual(await evaluateSuggestions([c], async (g) => g === '**/*.py'), []);
+});
+
+test('a generic file pattern without a generic language keeps the old rule unless a chain exists', () => {
+  // workspaceContains:**/*.md만 있고 다른 확장을 켜지 않았으면, 예전처럼 그 패턴도 확인 대상으로 둔다.
+  const [c] = planSuggestions([ext('x.y', { activationEvents: ['onLanguage:python', 'workspaceContains:**/*.md'] })], mdLangs);
+  assert.ok(c.checks.some((k) => k.globs.includes('**/*.md')));
+  assert.equal(c.generic, undefined);
+  // 범용 형식만으로 켜지는 확장은 연쇄가 있어도 판단하지 않는다(자기 언어 쪽 조건이 없다).
+  assert.deepEqual(planSuggestions([ext('md.only', { activationEvents: ['onLanguage:markdown', 'workspaceContains:*.md'] }, { started: ['a.b'] })], mdLangs), []);
+});

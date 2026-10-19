@@ -1,6 +1,8 @@
 // "이 폴더에서는 확실히 필요 없는 확장" 추천.
 // 확실한 경우만 고른다: 특정 언어 파일이나 특정 파일이 있을 때만 켜지는 확장인데, 그런 파일이 폴더에 하나도 없을 때.
 // 판단할 근거가 부족하면(항상 켜짐, 범용 형식 대상, 확인할 수 없는 활성화 조건, 다른 확장이 의존) 추천하지 않는다.
+// 예외: 범용 형식(Markdown 등) 때문에 켜져서 이 창에서 다른 확장까지 켰는데(예: Ruff → Python → Pylance)
+// 자기 언어 쪽 조건(*.py, pyproject.toml …)은 하나도 없으면, 그 연쇄를 근거로 추천한다.
 // vscode 모듈에 의존하지 않고, 파일 존재 확인은 호출하는 쪽이 넘겨준다.
 import type { Activation, LanguageDef } from './catalog';
 
@@ -29,6 +31,8 @@ export interface SuggestInput {
   /** 지금 이 폴더에서 켜져 있어야 하는 상태인지. 이미 꺼진 것은 추천할 필요가 없다. */
   desiredOn: boolean;
   locked: boolean;
+  /** 이 창에서 이 확장 때문에 켜진 확장들(VS Code 활성화 기록 기준). */
+  started?: string[];
 }
 
 export interface Check {
@@ -41,6 +45,9 @@ export interface Check {
 export interface Candidate {
   id: string;
   checks: Check[];
+  /** 범용 형식 때문에 켜져 다른 확장까지 켠 경우: 그 형식(언어 ID)과 켠 확장들. */
+  generic?: string[];
+  started?: string[];
 }
 
 export interface Suggestion {
@@ -51,6 +58,9 @@ export interface Suggestion {
   what?: string[];
   /** what에 다 담지 못한 것이 더 있는지. */
   more?: boolean;
+  /** 범용 형식(예: "markdown") 때문에 켜져서 다른 확장까지 켰을 때: 그 형식과 켠 확장 ID들. */
+  generic?: string[];
+  started?: string[];
 }
 
 /** 언어 ID → 그 언어 파일을 찾는 glob 목록. 기본 내장 언어와 설치된 확장의 언어 정의를 합쳐 만든다. */
@@ -77,20 +87,55 @@ export function languageGlobs(defs: LanguageDef[]): Map<string, { globs: string[
   return out;
 }
 
+/** 범용 언어의 파일 확장자 → 언어 ID(.md → markdown). "*.md" 같은 workspaceContains 패턴이 범용 형식인지 가린다. */
+function genericExtensions(langs: Map<string, { globs: string[] }>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const id of GENERIC_LANGUAGES) {
+    for (const g of langs.get(id)?.globs ?? []) {
+      const m = /^\*\*\/\*(\.[^/*?{}[\]]+)$/.exec(g);
+      if (m) out.set(m[1].toLowerCase(), id);
+    }
+  }
+  return out;
+}
+
+/** "*.md", "**\/*.md"처럼 범용 형식 파일 전체를 가리키는 패턴이면 그 언어 ID. */
+function genericGlobLanguage(glob: string, exts: Map<string, string>): string | undefined {
+  const m = /^(?:\*\*\/)?\*(\.[^/*?{}[\]]+)$/.exec(glob);
+  return m ? exts.get(m[1].toLowerCase()) : undefined;
+}
+
 /** 추천 후보와, 각 후보가 "필요 없다"고 판단하려면 모두 비어 있어야 하는 파일 조건을 고른다. */
 export function planSuggestions(rows: SuggestInput[], langs: Map<string, { globs: string[]; sample: string[] }>): Candidate[] {
   // 켜져 있는 다른 확장이 의존하는 확장은 끄면 그 확장도 망가지므로 제외한다.
   const neededByOthers = new Set(rows.filter((r) => r.desiredOn).flatMap((r) => r.dependencies));
+  const genericExts = genericExtensions(langs);
   const out: Candidate[] = [];
   for (const r of rows) {
     const a = r.activation;
     if (r.locked || !r.desiredOn || a.kind !== 'triggered' || neededByOthers.has(r.id)) continue;
     if (!a.languages.length && !a.globs.length) continue;
     if (a.events.some((e) => !CHECKABLE_EVENT.test(e))) continue;
-    if (a.languages.some((l) => GENERIC_LANGUAGES.has(l))) continue;
+    let languages = a.languages;
+    let globs = a.globs;
+    let generic: string[] | undefined;
+    const genericLangs = languages.filter((l) => GENERIC_LANGUAGES.has(l));
+    const genericGlobs = globs.filter((g) => genericGlobLanguage(g, genericExts));
+    if (genericLangs.length || genericGlobs.length) {
+      const specificLangs = languages.filter((l) => !GENERIC_LANGUAGES.has(l));
+      const specificGlobs = globs.filter((g) => !genericGlobs.includes(g));
+      if (r.started?.length && (specificLangs.length || specificGlobs.length)) {
+        // 연쇄를 근거로: 범용 형식은 빼고 자기 언어 쪽 조건만 확인한다.
+        generic = [...new Set([...genericLangs, ...genericGlobs.map((g) => genericGlobLanguage(g, genericExts)!)])];
+        languages = specificLangs;
+        globs = specificGlobs;
+      } else if (genericLangs.length) {
+        continue;
+      }
+    }
     const checks: Check[] = [];
     let unknownLanguage = false;
-    for (const l of a.languages) {
+    for (const l of languages) {
       const def = langs.get(l);
       if (!def || !def.globs.length) {
         unknownLanguage = true;
@@ -100,8 +145,8 @@ export function planSuggestions(rows: SuggestInput[], langs: Map<string, { globs
       checks.push({ what: sample ? `${l} files (${sample})` : `${l} files`, globs: def.globs });
     }
     if (unknownLanguage) continue;
-    for (const g of a.globs) checks.push({ what: g.replace(/^\*\*\//, ''), globs: [g] });
-    out.push({ id: r.id, checks });
+    for (const g of globs) checks.push({ what: g.replace(/^\*\*\//, ''), globs: [g] });
+    out.push(generic ? { id: r.id, checks, generic, started: r.started } : { id: r.id, checks });
   }
   return out;
 }
@@ -120,9 +165,10 @@ export function whatOf(checks: Check[]): { what: string[]; more: boolean } {
 }
 
 /** 확장 하나에 대한 "필요 없음" 사유(영어). */
-export function reasonFor(checks: Check[]): string {
+export function reasonFor(checks: Check[], chain?: { generic: string[]; started: string[] }): string {
   const { what, more } = whatOf(checks);
-  return `No ${what.join(', ')}${more ? ', …' : ''} in this folder`;
+  const none = `no ${what.join(', ')}${more ? ', …' : ''} in this folder`;
+  return chain ? `Started ${chain.started.join(', ')} because of ${chain.generic.join(', ')} files; ${none}` : `N${none.slice(1)}`;
 }
 
 /** 모든 조건이 비어 있는 후보만 추천한다. 같은 glob은 한 번만 확인한다. */
@@ -136,7 +182,9 @@ export async function evaluateSuggestions(candidates: Candidate[], exists: (glob
   const results = await Promise.all(
     candidates.map(async (c): Promise<Suggestion | undefined> => {
       const found = await Promise.all(c.checks.flatMap((k) => k.globs.map(check)));
-      return found.some(Boolean) ? undefined : { id: c.id, reason: reasonFor(c.checks), ...whatOf(c.checks) };
+      if (found.some(Boolean)) return undefined;
+      const chain = c.generic && c.started ? { generic: c.generic, started: c.started } : undefined;
+      return { id: c.id, reason: reasonFor(c.checks, chain), ...whatOf(c.checks), ...chain };
     }),
   );
   return results.filter((s): s is Suggestion => !!s);
