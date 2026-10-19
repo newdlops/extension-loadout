@@ -11,6 +11,12 @@
     "ms-toolsai.vscode-jupyter-slideshow",
     "newdlops.django-orm-intellisense",
     "rust-lang.rust-analyzer",
-    "styled-components.vscode-styled-components"
-  ]
+    "styled-components.vscode-styled-components",
+    "charliermarsh.ruff",
+    "ms-python.*"
+  ],
+  "notes": {
+    "charliermarsh.ruff": "README.md 같은 Markdown 파일 때문에 켜지고, 켜지면 Python·Pylance(약 400MB)까지 띄운다. 이 폴더엔 Python이 없다.",
+    "ms-python.*": "Ruff가 불러서 켜지던 Python 확장들. 이 폴더엔 Python이 없다."
+  }
 }
